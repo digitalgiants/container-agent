@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import google.generativeai as genai
+from google import genai
 
 from agent.incidents import Incident
 
@@ -9,8 +9,7 @@ def analyze_incident(incident: Incident, log_excerpt: str, api_key: str) -> tupl
     if not api_key:
         return None, []
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    client = genai.Client(api_key=api_key)
 
     actions_text = "\n".join(f"- Ran: {a.command}\n  Result: {a.result}" for a in incident.actions)
     prompt = f"""You are a Podman Compose operations assistant on RHEL Linux.
@@ -31,7 +30,7 @@ COMMANDS: numbered list of shell commands to try next (podman compose only, no d
 """
 
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         text = (response.text or "").strip()
     except Exception as exc:  # noqa: BLE001
         return f"Gemini analysis failed: {exc}", []

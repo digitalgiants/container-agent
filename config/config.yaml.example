@@ -6,8 +6,9 @@ max_restarts_per_hour: 5
 log_tail_lines: 80
 graceful_retries_before_force: 2
 
+# Recursively finds compose.yaml / docker-compose.yml under each path (e.g. every git repo).
 compose_search_paths:
-  - ~/gitrepo/compose-files
+  - /home/digilabs
 
 protected_volume_globs:
   - "**/postgres/**"

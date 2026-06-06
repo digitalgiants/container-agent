@@ -11,7 +11,7 @@ Designed for **rootless Podman** — the agent runs as **your SSH login user** (
 | **Gemini API key** | [Google AI Studio](https://aistudio.google.com/apikey) → Create API key |
 | **Gmail App Password** | [Google App Passwords](https://myaccount.google.com/apppasswords) (2FA required on the account) |
 | **Git access** | SSH to the RHEL box from your dev machine |
-| **Compose path** | Default: `~/gitrepo/compose-files` |
+| **Compose search root** | Default: `/home/digilabs` (recursive — every git repo underneath) |
 
 Secrets live only in `~/.config/container-agent/secrets.env` on the server — **never committed to git**.
 
@@ -44,7 +44,7 @@ chmod +x install.sh uninstall.sh
 The installer will:
 
 - `dnf install` python3, msmtp, lsof, podman (sudo once)
-- Prompt for compose path, Gemini key, Gmail app password
+- Prompt for compose search root (default `/home/digilabs`), Gemini key, Gmail app password
 - Write config to `~/.config/container-agent/`
 - Install a **systemd user timer** (every 5 minutes)
 - Start the **approval web UI** container on `127.0.0.1:8787`
@@ -125,12 +125,28 @@ git pull
 
 Keeps existing `config.yaml`, `secrets.env`, and `incidents.jsonl`; upgrades venv, systemd units, and web UI.
 
+### Already installed? Update the search path
+
+Edit `~/.config/container-agent/config.yaml`:
+
+```yaml
+compose_search_paths:
+  - /home/digilabs
+```
+
+The agent walks every subdirectory (each git repo) and picks up any `compose.yaml` or `docker-compose.yml`. Preview what it finds:
+
+```bash
+find /home/digilabs \( -name compose.yml -o -name compose.yaml -o -name docker-compose.yml -o -name docker-compose.yaml \) 2>/dev/null
+container-agent run
+```
+
 ## Architecture
 
 ```
 systemd user timer (5 min)
     → python -m agent
-        → discover compose projects in ~/gitrepo/compose-files
+        → discover compose files under /home/digilabs (all git repos)
         → health + logs (tail 80)
         → graceful restart (max 5/hour per service)
         → lock-file analysis (lsof, backup, optional delete)

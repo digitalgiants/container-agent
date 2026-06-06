@@ -6,7 +6,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent.config import DEFAULT_DATA_DIR, load_config, load_secrets
+from agent.config import load_config
+from agent.discovery import discover_compose_projects
 
 
 def cmd_approve(incident_id: str) -> int:
@@ -20,6 +21,18 @@ def cmd_approve(incident_id: str) -> int:
     approvals.mkdir(parents=True, exist_ok=True)
     (approvals / f"{incident_id}.approved").write_text(datetime.now(timezone.utc).isoformat())
     print(f"Approved {incident_id}. Next agent run will apply queued fixes.")
+    return 0
+
+
+def cmd_discover() -> int:
+    cfg = load_config()
+    projects = discover_compose_projects(cfg["compose_search_paths"])
+    if not projects:
+        print("No compose projects found.")
+        return 1
+    for project in projects:
+        print(f"{project.name}\t{project.compose_file}")
+    print(f"\n{len(projects)} project(s) under {cfg['compose_search_paths']}")
     return 0
 
 
@@ -50,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("status", help="Show agent status")
     sub.add_parser("run", help="Run one monitoring cycle now")
+    sub.add_parser("discover", help="List compose projects found under configured search paths")
 
     args = parser.parse_args(argv)
     if args.command == "approve":
@@ -60,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         from agent.__main__ import run_once
 
         return run_once()
+    if args.command == "discover":
+        return cmd_discover()
     return 1
 
 

@@ -7,6 +7,9 @@ from pathlib import Path
 
 
 COMPOSE_FILENAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+SKIP_DIR_NAMES = frozenset(
+    {".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", "vendor"}
+)
 
 
 @dataclass(frozen=True)
@@ -26,16 +29,32 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
     )
 
 
+def _walk_compose_files(root: Path):
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir():
+                if entry.name in SKIP_DIR_NAMES:
+                    continue
+                stack.append(entry)
+            elif entry.name in COMPOSE_FILENAMES:
+                yield entry
+
+
 def discover_compose_projects(search_paths: list[Path]) -> list[ComposeProject]:
     found: dict[Path, ComposeProject] = {}
     for root in search_paths:
         if not root.exists():
             continue
-        for path in root.rglob("*"):
-            if path.name in COMPOSE_FILENAMES and path.is_file():
-                directory = path.parent.resolve()
-                name = directory.name
-                found[directory] = ComposeProject(name=name, compose_file=path, directory=directory)
+        for path in _walk_compose_files(root.resolve()):
+            directory = path.parent.resolve()
+            name = directory.name
+            found[directory] = ComposeProject(name=name, compose_file=path, directory=directory)
     return sorted(found.values(), key=lambda p: str(p.directory))
 
 

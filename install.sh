@@ -60,7 +60,7 @@ write_config() {
   local compose_path="$1"
   mkdir -p "$CONFIG_DIR" "$DATA_DIR"/{pending,approvals,backups,state}
   if [[ ! -f "${CONFIG_DIR}/config.yaml" ]]; then
-    sed "s|~/gitrepo/compose-files|${compose_path}|g" \
+    sed "s|/home/digilabs|${compose_path}|g" \
       "${REPO_DIR}/config/config.yaml.example" > "${CONFIG_DIR}/config.yaml"
     log "Wrote ${CONFIG_DIR}/config.yaml"
   else
@@ -157,8 +157,8 @@ main() {
   require_cmd podman
   require_cmd python3
 
-  local default_compose="${HOME}/gitrepo/compose-files"
-  prompt_value COMPOSE_PATH "Compose files directory" "$default_compose"
+  local default_compose="/home/digilabs"
+  prompt_value COMPOSE_PATH "Root directory to search for compose files (recursive)" "$default_compose"
 
   install_packages
   setup_venv

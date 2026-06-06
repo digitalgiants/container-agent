@@ -8,7 +8,19 @@ from pathlib import Path
 
 COMPOSE_FILENAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 SKIP_DIR_NAMES = frozenset(
-    {".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", "vendor"}
+    {
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".tox",
+        "vendor",
+        ".local",
+        ".cache",
+        ".bun",
+        "overlay",
+    }
 )
 
 
@@ -38,12 +50,15 @@ def _walk_compose_files(root: Path):
         except OSError:
             continue
         for entry in entries:
-            if entry.is_dir():
-                if entry.name in SKIP_DIR_NAMES:
-                    continue
-                stack.append(entry)
-            elif entry.name in COMPOSE_FILENAMES:
-                yield entry
+            try:
+                if entry.is_dir():
+                    if entry.name in SKIP_DIR_NAMES:
+                        continue
+                    stack.append(entry)
+                elif entry.name in COMPOSE_FILENAMES:
+                    yield entry
+            except OSError:
+                continue
 
 
 def discover_compose_projects(search_paths: list[Path]) -> list[ComposeProject]:

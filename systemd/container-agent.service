@@ -1,0 +1,12 @@
+[Unit]
+Description=Container Agent health scan
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%REPO_DIR%
+Environment=PYTHONPATH=%REPO_DIR%
+ExecStart=%REPO_DIR%/.venv/bin/python -m agent
+
+[Install]
+WantedBy=default.target

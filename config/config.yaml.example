@@ -1,0 +1,40 @@
+# Copy to ~/.config/container-agent/config.yaml during install (install.sh does this).
+
+automation_mode: human_in_loop  # human_in_loop | full_auto
+poll_interval_minutes: 5
+max_restarts_per_hour: 5
+log_tail_lines: 80
+graceful_retries_before_force: 2
+
+compose_search_paths:
+  - ~/gitrepo/compose-files
+
+protected_volume_globs:
+  - "**/postgres/**"
+  - "**/mysql/**"
+  - "**/mariadb/**"
+  - "**/*backup*"
+  - "**/*.db"
+  - "**/*.sqlite*"
+
+lock_file_patterns:
+  - "*.lock"
+  - "*.pid"
+  - "*-wal"
+  - "*-shm"
+
+log_error_patterns:
+  - "database is locked"
+  - "Resource temporarily unavailable"
+  - "file is locked"
+  - "Permission denied"
+  - "OOM"
+  - "out of memory"
+  - "oauth"
+  - "token expired"
+  - "sync failed"
+  - "authentication failed"
+
+disk_warn_percent_free: 15
+
+web_ui_url: http://127.0.0.1:8787

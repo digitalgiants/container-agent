@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import smtplib
 import subprocess
 from email.message import EmailMessage
@@ -55,7 +56,7 @@ Web UI: see config web_ui_url
 
 def _via_msmtp(incident: Incident, secrets: dict[str, str]) -> bool:
     recipient = secrets.get("ALERT_EMAIL")
-    if not recipient:
+    if not recipient or not shutil.which("msmtp"):
         return False
     actions = "\n".join(f"{i + 1}. {a.command} -> {a.result}" for i, a in enumerate(incident.actions))
     body = (

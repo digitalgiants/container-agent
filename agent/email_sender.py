@@ -3,17 +3,19 @@ from __future__ import annotations
 import shutil
 import smtplib
 import subprocess
+import sys
 from email.message import EmailMessage
 
+from agent.config import _clean_secret
 from agent.incidents import Incident
 
 
 def _via_smtplib(incident: Incident, secrets: dict[str, str]) -> bool:
-    host = secrets.get("SMTP_HOST", "smtp.gmail.com")
-    port = int(secrets.get("SMTP_PORT", "587"))
-    user = secrets.get("SMTP_USER", "")
-    password = secrets.get("SMTP_PASSWORD", "")
-    recipient = secrets.get("ALERT_EMAIL", user)
+    host = _clean_secret(secrets.get("SMTP_HOST", "smtp.gmail.com"))
+    port = int(_clean_secret(secrets.get("SMTP_PORT", "587")))
+    user = _clean_secret(secrets.get("SMTP_USER", ""))
+    password = _clean_secret(secrets.get("SMTP_PASSWORD", ""))
+    recipient = _clean_secret(secrets.get("ALERT_EMAIL", user))
     if not user or not password or not recipient:
         return False
 
@@ -47,10 +49,14 @@ Web UI: see config web_ui_url
     msg["To"] = recipient
     msg.set_content(body)
 
-    with smtplib.SMTP(host, port, timeout=30) as smtp:
-        smtp.starttls()
-        smtp.login(user, password)
-        smtp.send_message(msg)
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(user, password)
+            smtp.send_message(msg)
+    except (UnicodeEncodeError, smtplib.SMTPException, OSError) as exc:
+        print(f"Email alert failed: {exc}", file=sys.stderr)
+        return False
     return True
 
 
@@ -79,6 +85,10 @@ def _via_msmtp(incident: Incident, secrets: dict[str, str]) -> bool:
 
 
 def send_unresolved_alert(incident: Incident, secrets: dict[str, str]) -> bool:
-    if _via_msmtp(incident, secrets):
-        return True
-    return _via_smtplib(incident, secrets)
+    try:
+        if _via_msmtp(incident, secrets):
+            return True
+        return _via_smtplib(incident, secrets)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Email alert failed: {exc}", file=sys.stderr)
+        return False

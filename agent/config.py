@@ -14,6 +14,12 @@ def _expand(path: str) -> Path:
     return Path(os.path.expanduser(path)).resolve()
 
 
+def _clean_secret(value: str) -> str:
+    for char in ("\xa0", "\u200b", "\u200c", "\u200d", "\ufeff"):
+        value = value.replace(char, "")
+    return value.strip()
+
+
 def load_secrets(secrets_path: Path | None = None) -> dict[str, str]:
     path = secrets_path or (DEFAULT_CONFIG_DIR / "secrets.env")
     if not path.exists():
@@ -24,7 +30,7 @@ def load_secrets(secrets_path: Path | None = None) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        secrets[key.strip()] = value.strip()
+        secrets[key.strip()] = _clean_secret(value)
     return secrets
 
 

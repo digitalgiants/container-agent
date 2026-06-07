@@ -5,6 +5,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY static/ static/
+RUN test -f static/index.html && test -f static/app.js && test -f static/style.css
 
 ENV CONTAINER_AGENT_DATA_DIR=/data
 EXPOSE 8787

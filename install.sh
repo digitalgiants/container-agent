@@ -148,8 +148,16 @@ install_systemd_user_units() {
 
 start_web_ui() {
   export CONTAINER_AGENT_DATA_DIR="$DATA_DIR"
+  if [[ ! -f "${REPO_DIR}/web/static/index.html" ]]; then
+    die "Missing ${REPO_DIR}/web/static/index.html — run git pull for the full UI"
+  fi
   log "Building and starting approval UI container..."
-  podman compose -f "${REPO_DIR}/compose/docker-compose.yml" up -d --build
+  podman compose -f "${REPO_DIR}/compose/docker-compose.yml" build --no-cache
+  podman compose -f "${REPO_DIR}/compose/docker-compose.yml" up -d --force-recreate
+  sleep 2
+  if ! curl -fsS "http://127.0.0.1:8787/health" >/dev/null; then
+    die "Web UI failed health check — run: podman logs container-agent-ui"
+  fi
   log "Web UI on http://127.0.0.1:8787 (reverse-proxy this port)"
 }
 

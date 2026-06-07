@@ -9,14 +9,78 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 DATA_DIR = Path(os.environ.get("CONTAINER_AGENT_DATA_DIR", "/data"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+APP_VERSION = "0.2.0"
+STATIC_ASSETS = {
+    "app.js": "application/javascript",
+    "style.css": "text/css",
+}
 
-app = FastAPI(title="Container Agent", version="0.2.0")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app = FastAPI(title="Container Agent", version=APP_VERSION)
+
+
+def _static_status() -> dict[str, Any]:
+    files = {name: (STATIC_DIR / name).is_file() for name in (*STATIC_ASSETS, "index.html")}
+    return {
+        "static_dir": str(STATIC_DIR),
+        "files": files,
+        "ok": all(files.values()),
+    }
+
+
+def _missing_static_page() -> str:
+    status = _static_status()
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Container Agent — setup error</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem;color:#e8ecf4;background:#0c0e14}}</style>
+</head><body>
+<h1>UI not deployed correctly</h1>
+<p>Static files are missing inside the container. Rebuild from a full git checkout:</p>
+<pre>cd ~/container-agent
+git pull
+export CONTAINER_AGENT_DATA_DIR="$HOME/.local/share/container-agent"
+podman compose -f compose/docker-compose.yml build --no-cache
+podman compose -f compose/docker-compose.yml up -d --force-recreate
+podman exec container-agent-ui ls -la /app/static/</pre>
+<p>Expected files: <code>index.html</code>, <code>app.js</code>, <code>style.css</code></p>
+<p>Status: <code>{html.escape(json.dumps(status))}</code></p>
+<p><a href="/health">/health</a></p>
+</body></html>"""
+
+
+@app.on_event("startup")
+def _startup_check() -> None:
+    status = _static_status()
+    if status["ok"]:
+        print(f"container-agent-ui {APP_VERSION}: static files OK at {STATIC_DIR}")
+    else:
+        print(f"container-agent-ui {APP_VERSION}: WARNING missing static files: {status['files']}")
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    static = _static_status()
+    return {
+        "status": "ok" if static["ok"] else "degraded",
+        "version": APP_VERSION,
+        **static,
+        "data_dir": str(DATA_DIR),
+        "data_dir_readable": os.access(DATA_DIR, os.R_OK),
+    }
+
+
+@app.get("/static/{asset}")
+def static_asset(asset: str) -> FileResponse:
+    media_type = STATIC_ASSETS.get(asset)
+    if not media_type:
+        raise HTTPException(status_code=404, detail="Not Found")
+    path = STATIC_DIR / asset
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Missing static asset: {asset}")
+    return FileResponse(path, media_type=media_type)
 
 
 class SnoozeRequest(BaseModel):
@@ -227,8 +291,11 @@ def _clear_snooze(project: str, service: str) -> bool:
 
 
 @app.get("/", response_class=HTMLResponse)
-def home() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+def home() -> HTMLResponse:
+    index = STATIC_DIR / "index.html"
+    if not index.is_file():
+        return HTMLResponse(_missing_static_page(), status_code=503)
+    return HTMLResponse(index.read_text())
 
 
 @app.get("/incident/{incident_id}", response_class=HTMLResponse)

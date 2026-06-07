@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.approvals import log_approval
 from agent.config import load_config
 from agent.discovery import discover_compose_projects
 
@@ -17,9 +17,15 @@ def cmd_approve(incident_id: str) -> int:
     if not pending.exists():
         print(f"No pending action for incident {incident_id}", file=sys.stderr)
         return 1
-    approvals = data_dir / "approvals"
-    approvals.mkdir(parents=True, exist_ok=True)
-    (approvals / f"{incident_id}.approved").write_text(datetime.now(timezone.utc).isoformat())
+    payload = json.loads(pending.read_text())
+    log_approval(
+        data_dir,
+        incident_id=incident_id,
+        project=payload.get("project"),
+        service=payload.get("service"),
+        action=payload.get("action"),
+        approved_by="cli",
+    )
     print(f"Approved {incident_id}. Next agent run will apply queued fixes.")
     return 0
 

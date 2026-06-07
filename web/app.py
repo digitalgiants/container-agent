@@ -5,16 +5,28 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 DATA_DIR = Path(os.environ.get("CONTAINER_AGENT_DATA_DIR", "/data"))
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Container Agent", version="0.1.0")
+app = FastAPI(title="Container Agent", version="0.2.0")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-def _read_jsonl(path: Path, limit: int = 50) -> list[dict]:
+class SnoozeRequest(BaseModel):
+    project: str
+    service: str
+    hours: float = Field(default=4, gt=0, le=168)
+    reason: str = ""
+
+
+def _read_jsonl(path: Path, limit: int = 200) -> list[dict]:
     if not path.exists():
         return []
     lines = path.read_text().splitlines()
@@ -40,11 +52,25 @@ def _pending() -> list[dict]:
     return rows
 
 
-def _incidents(limit: int = 30) -> list[dict]:
+def _incidents(limit: int = 100) -> list[dict]:
     return _read_jsonl(DATA_DIR / "incidents.jsonl", limit=limit)
 
 
-def _activity(limit: int = 50) -> list[dict]:
+def _find_incident(incident_id: str) -> dict | None:
+    path = DATA_DIR / "incidents.jsonl"
+    if not path.exists():
+        return None
+    for line in reversed(path.read_text().splitlines()):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("id") == incident_id:
+            return row
+    return None
+
+
+def _activity(limit: int = 100) -> list[dict]:
     return _read_jsonl(DATA_DIR / "activity.jsonl", limit=limit)
 
 
@@ -58,20 +84,46 @@ def _heartbeat() -> dict | None:
         return None
 
 
-def _status() -> dict:
+def _snoozes() -> list[dict]:
+    path = DATA_DIR / "state" / "snoozes.json"
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(raw, dict):
+        return []
+    now = datetime.now(timezone.utc).timestamp()
+    rows = []
+    for entry in raw.values():
+        until = float(entry.get("until", 0))
+        if until <= now:
+            continue
+        row = dict(entry)
+        row["remaining_seconds"] = int(until - now)
+        rows.append(row)
+    return sorted(rows, key=lambda r: r.get("until", 0))
+
+
+def _approval_history(limit: int = 50) -> list[dict]:
+    return _read_jsonl(DATA_DIR / "approvals" / "history.jsonl", limit=limit)
+
+
+def _status() -> dict[str, Any]:
     incidents_path = DATA_DIR / "incidents.jsonl"
     activity_path = DATA_DIR / "activity.jsonl"
     pending_dir = DATA_DIR / "pending"
+    heartbeat = _heartbeat() or {}
     return {
         "data_dir": str(DATA_DIR),
-        "data_dir_exists": DATA_DIR.exists(),
         "data_dir_readable": os.access(DATA_DIR, os.R_OK),
-        "incidents_exists": incidents_path.exists(),
         "incidents_count": len(incidents_path.read_text().splitlines()) if incidents_path.exists() else 0,
-        "activity_exists": activity_path.exists(),
         "activity_count": len(activity_path.read_text().splitlines()) if activity_path.exists() else 0,
         "pending_count": len(list(pending_dir.glob("*.json"))) if pending_dir.exists() else 0,
-        "heartbeat": _heartbeat(),
+        "snooze_count": len(_snoozes()),
+        "heartbeat": heartbeat,
+        "services": heartbeat.get("services", []),
     }
 
 
@@ -89,95 +141,134 @@ def _fmt_ts(ts: str | None) -> str:
         return _esc(ts)
 
 
-@app.get("/", response_class=HTMLResponse)
-def home() -> str:
-    pending = _pending()
-    incidents = _incidents()
-    activity = _activity()
-    status = _status()
-    heartbeat = status.get("heartbeat") or {}
-
-    pending_html = "".join(
-        f"""<li class="card pending">
-          <div class="meta">{_fmt_ts(p.get('ts'))}</div>
-          <div><b>{_esc(p.get('project'))}/{_esc(p.get('service'))}</b></div>
-          <div class="issue">{_esc(p.get('issue'))}</div>
-          <div class="detail">Action: {_esc(p.get('action'))}</div>
-          <div class="detail">Paths: {_esc(', '.join(p.get('paths') or []))}</div>
-          <a href='/approve/{_esc(p.get('incident_id'))}'>Approve {_esc((p.get('incident_id') or '')[:8])}</a>
-        </li>"""
-        for p in pending
-    ) or "<li class='empty'>No pending approvals</li>"
-
-    incident_html = "".join(
-        f"""<li class="card incident outcome-{_esc(i.get('outcome'))}">
-          <div class="meta">{_fmt_ts(i.get('ts'))} · <code>{_esc((i.get('id') or '')[:8])}</code></div>
-          <div><b>{_esc(i.get('project'))}/{_esc(i.get('service'))}</b>
-            <span class="badge">{_esc(i.get('outcome'))}</span></div>
-          <div class="issue">{_esc(i.get('issue'))}</div>
-          <div class="detail">{_esc((i.get('root_cause') or '')[:240])}</div>
-        </li>"""
-        for i in incidents
-    ) or "<li class='empty'>No incidents yet</li>"
-
-    activity_html = "".join(
-        f"""<li class="activity {_esc(a.get('level', 'info'))}">
-          <span class="meta">{_fmt_ts(a.get('ts'))}</span>
-          <span class="msg">{_esc(a.get('message'))}</span>
-          {f"<span class='svc'>{_esc(a.get('project'))}/{_esc(a.get('service'))}</span>" if a.get('project') else ""}
-        </li>"""
-        for a in activity
-    ) or "<li class='empty'>No agent activity yet — run <code>container-agent run</code> once.</li>"
-
-    last_scan = _fmt_ts(heartbeat.get("ts")) if heartbeat else "never"
-    agent_data_dir = _esc(heartbeat.get("data_dir") or "unknown")
-
+def _page_shell(title: str, body: str, *, page: str = "other", extra_head: str = "") -> str:
     return f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>Container Agent</title>
-<style>
-body {{ font-family: system-ui, sans-serif; margin: 2rem; max-width: 980px; color: #1a1a1a; }}
-h1 {{ margin-bottom: 0.2rem; }}
-p.sub {{ color: #555; margin-top: 0; }}
-section {{ margin-top: 1.75rem; }}
-ul {{ list-style: none; padding: 0; margin: 0; }}
-.card, .activity, .empty {{ border: 1px solid #ddd; border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 0.65rem; }}
-.meta {{ color: #666; font-size: 0.85rem; margin-bottom: 0.35rem; }}
-.issue {{ margin: 0.35rem 0; }}
-.detail {{ color: #444; font-size: 0.92rem; }}
-.badge {{ font-size: 0.75rem; background: #eee; padding: 0.1rem 0.45rem; border-radius: 999px; margin-left: 0.35rem; }}
-.outcome-unresolved .badge {{ background: #fde8e8; }}
-.outcome-resolved .badge {{ background: #e5f6ea; }}
-.outcome-pending_approval .badge {{ background: #fff4db; }}
-.activity.warn {{ border-color: #f0c36d; background: #fffaf0; }}
-.activity.error {{ border-color: #e57373; background: #fff5f5; }}
-.activity .svc {{ color: #666; font-size: 0.85rem; margin-left: 0.5rem; }}
-.diagnostics {{ font-size: 0.88rem; color: #444; background: #f7f7f7; padding: 0.75rem 1rem; border-radius: 8px; }}
-a {{ color: #0b57d0; }}
-code {{ font-size: 0.9em; }}
-</style></head><body>
-<h1>Container Agent</h1>
-<p class="sub">Approve destructive fixes and review recent agent activity.</p>
-
-<section>
-  <h2>Agent activity</h2>
-  <p class="sub">Non-actionable scan results: resolved services, emails sent, warnings, and scan summaries.</p>
-  <ul>{activity_html}</ul>
-</section>
-
-<section><h2>Pending approvals</h2><ul>{pending_html}</ul></section>
-<section><h2>Recent incidents</h2><ul>{incident_html}</ul></section>
-
-<section>
-  <h2>Diagnostics</h2>
-  <div class="diagnostics">
-    <div>UI data dir: <code>{_esc(status['data_dir'])}</code>
-      ({'readable' if status['data_dir_readable'] else 'not readable'})</div>
-    <div>Agent data dir (last scan): <code>{agent_data_dir}</code></div>
-    <div>Last scan: {last_scan or 'never'}</div>
-    <div>Files: incidents={status['incidents_count']}, activity={status['activity_count']}, pending={status['pending_count']}</div>
-  </div>
-</section>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_esc(title)}</title>
+<link rel="stylesheet" href="/static/style.css">
+{extra_head}
+</head><body data-page="{_esc(page)}"><div class="page">{body}</div>
+<script src="/static/app.js"></script>
 </body></html>"""
+
+
+def _do_approve(incident_id: str, approved_by: str = "web") -> dict:
+    pending = DATA_DIR / "pending" / f"{incident_id}.json"
+    if not pending.exists():
+        raise HTTPException(status_code=404, detail="Pending action not found")
+    payload = json.loads(pending.read_text())
+    stamp = datetime.now(timezone.utc).isoformat()
+    approvals = DATA_DIR / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    (approvals / f"{incident_id}.approved").write_text(stamp)
+    entry = {
+        "incident_id": incident_id,
+        "project": payload.get("project"),
+        "service": payload.get("service"),
+        "action": payload.get("action"),
+        "approved_at": stamp,
+        "approved_by": approved_by,
+    }
+    with (approvals / "history.jsonl").open("a") as fh:
+        fh.write(json.dumps(entry) + "\n")
+    return entry
+
+
+def _write_snooze(project: str, service: str, hours: float, reason: str = "") -> dict:
+    import time
+
+    key = f"{project}/{service}"
+    until = time.time() + (hours * 3600)
+    entry = {
+        "project": project,
+        "service": service,
+        "until": until,
+        "until_iso": datetime.fromtimestamp(until, tz=timezone.utc).isoformat(),
+        "hours": hours,
+        "reason": reason,
+        "created_by": "web",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    state_dir = DATA_DIR / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = state_dir / "snoozes.json"
+    snoozes: dict = {}
+    if path.exists():
+        try:
+            snoozes = json.loads(path.read_text())
+            if not isinstance(snoozes, dict):
+                snoozes = {}
+        except json.JSONDecodeError:
+            snoozes = {}
+    now = time.time()
+    snoozes = {k: v for k, v in snoozes.items() if float(v.get("until", 0)) > now}
+    snoozes[key] = entry
+    path.write_text(json.dumps(snoozes, indent=2))
+    entry["remaining_seconds"] = int(until - now)
+    return entry
+
+
+def _clear_snooze(project: str, service: str) -> bool:
+    key = f"{project}/{service}"
+    path = DATA_DIR / "state" / "snoozes.json"
+    if not path.exists():
+        return False
+    try:
+        snoozes = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return False
+    if key not in snoozes:
+        return False
+    del snoozes[key]
+    path.write_text(json.dumps(snoozes, indent=2))
+    return True
+
+
+@app.get("/", response_class=HTMLResponse)
+def home() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/incident/{incident_id}", response_class=HTMLResponse)
+def incident_page(incident_id: str) -> str:
+    incident = _find_incident(incident_id)
+    if not incident:
+        body = f"""
+        <div class="center-page">
+          <div class="icon-lg">✕</div>
+          <h1>Incident not found</h1>
+          <p><a href="/">← Dashboard</a></p>
+        </div>"""
+        return _page_shell("Not found", body)
+
+    actions_html = "".join(
+        f"<li><code>{_esc(a.get('command'))}</code><br><span class='muted'>{_esc(a.get('result'))}</span></li>"
+        for a in incident.get("actions") or []
+    ) or "<li class='muted'>No actions recorded</li>"
+    cmds_html = "".join(f"<li><code>{_esc(c)}</code></li>" for c in incident.get("recommended_commands") or [])
+    body = f"""
+    <header class="hero">
+      <h1>{_esc(incident.get('project'))}/{_esc(incident.get('service'))}</h1>
+      <p><span class="badge badge-{_esc(incident.get('outcome'))}">{_esc(incident.get('outcome'))}</span></p>
+    </header>
+    <section class="card detail-card">
+      <div class="meta" data-ts="{_esc(incident.get('ts'))}">{_fmt_ts(incident.get('ts'))}</div>
+      <p class="issue">{_esc(incident.get('issue'))}</p>
+      <h3>Root cause</h3>
+      <p class="detail">{_esc(incident.get('root_cause') or '—')}</p>
+      <h3>Actions taken</h3>
+      <ul class="detail-list">{actions_html}</ul>
+      <h3>Recommended commands</h3>
+      <ul class="detail-list">{cmds_html or "<li class='muted'>—</li>"}</ul>
+      <div class="btn-row">
+        <button class="btn-secondary snooze-btn" data-project="{_esc(incident.get('project'))}" data-service="{_esc(incident.get('service'))}">Snooze 4h</button>
+        <a class="btn" href="/">← Dashboard</a>
+      </div>
+    </section>
+    """
+    return _page_shell(f"Incident {_esc(incident_id[:8])}", body, page="incident")
 
 
 @app.get("/api/pending")
@@ -190,6 +281,14 @@ def api_incidents() -> list[dict]:
     return _incidents()
 
 
+@app.get("/api/incidents/{incident_id}")
+def api_incident(incident_id: str) -> dict:
+    row = _find_incident(incident_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return row
+
+
 @app.get("/api/activity")
 def api_activity() -> list[dict]:
     return _activity()
@@ -200,14 +299,58 @@ def api_status() -> dict:
     return _status()
 
 
+@app.get("/api/snoozes")
+def api_snoozes() -> list[dict]:
+    return _snoozes()
+
+
+@app.get("/api/approvals/history")
+def api_approval_history() -> list[dict]:
+    return _approval_history()
+
+
+@app.post("/api/snooze")
+def api_snooze(req: SnoozeRequest) -> dict:
+    return _write_snooze(req.project, req.service, req.hours, req.reason)
+
+
+@app.delete("/api/snooze/{project}/{service}")
+def api_clear_snooze(project: str, service: str) -> dict:
+    if not _clear_snooze(project, service):
+        raise HTTPException(status_code=404, detail="Snooze not found")
+    return {"status": "cleared", "project": project, "service": service}
+
+
 @app.post("/api/approve/{incident_id}")
-@app.get("/approve/{incident_id}")
-def approve(incident_id: str) -> dict:
-    pending = DATA_DIR / "pending" / f"{incident_id}.json"
-    if not pending.exists():
-        raise HTTPException(status_code=404, detail="Pending action not found")
-    approvals = DATA_DIR / "approvals"
-    approvals.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).isoformat()
-    (approvals / f"{incident_id}.approved").write_text(stamp)
-    return {"incident_id": incident_id, "approved_at": stamp, "status": "approved"}
+def approve_api(incident_id: str, request: Request) -> dict:
+    approved_by = request.headers.get("x-approved-by", "web-api")
+    return _do_approve(incident_id, approved_by=approved_by)
+
+
+@app.get("/approve/{incident_id}", response_class=HTMLResponse)
+def approve_page(incident_id: str, request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-user") or request.headers.get("remote-user")
+    approved_by = forwarded or "web"
+    try:
+        result = _do_approve(incident_id, approved_by=approved_by)
+    except HTTPException:
+        body = """
+        <div class="center-page">
+          <div class="icon-lg">✕</div>
+          <h1>Not found</h1>
+          <p>No pending action for this incident.</p>
+          <p><a href="/">← Dashboard</a></p>
+        </div>"""
+        return _page_shell("Not found", body)
+
+    body = f"""
+    <div class="center-page">
+      <div class="icon-lg">✓</div>
+      <h1>Approved</h1>
+      <p><strong>{_esc(result.get('project'))}/{_esc(result.get('service'))}</strong></p>
+      <p>Approved at <span data-ts="{_esc(result['approved_at'])}">{_fmt_ts(result['approved_at'])}</span></p>
+      <p class="muted">By {_esc(result.get('approved_by'))} · next scan applies the fix</p>
+      <p style="margin-top:1.5rem"><a class="btn" href="/">← Dashboard</a></p>
+    </div>
+    """
+    return _page_shell("Approved", body, page="approve")

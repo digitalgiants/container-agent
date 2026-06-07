@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Container Agent</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="dashboard">
+  <div class="page">
+    <header class="hero">
+      <div class="toolbar">
+        <button id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+        <span id="refresh-indicator" class="refresh-indicator">Live</span>
+      </div>
+      <h1>Container Agent</h1>
+      <p>Monitor Podman Compose stacks · approve fixes · review scan history</p>
+    </header>
+
+    <div id="stats" class="stats"></div>
+
+    <section>
+      <div class="section-head">
+        <h2>Service health</h2>
+        <span class="hint" id="health-hint">Last scan</span>
+      </div>
+      <div id="health-strip" class="health-strip"></div>
+    </section>
+
+    <section id="snoozes-section" class="hidden">
+      <div class="section-head">
+        <h2>Snoozed services</h2>
+        <span class="hint">Alerts muted</span>
+      </div>
+      <ul id="snoozes" class="feed"></ul>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Pending approvals</h2>
+        <span class="hint">Action required</span>
+      </div>
+      <ul id="pending" class="feed"></ul>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Agent activity</h2>
+        <input id="activity-filter" class="filter-input" type="search" placeholder="Filter activity…" aria-label="Filter activity">
+      </div>
+      <ul id="activity" class="feed"></ul>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Recent incidents</h2>
+        <input id="incident-filter" class="filter-input" type="search" placeholder="Filter by project, service, outcome…" aria-label="Filter incidents">
+      </div>
+      <ul id="incidents" class="feed"></ul>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Approval history</h2>
+        <span class="hint">Who approved what</span>
+      </div>
+      <ul id="approvals" class="feed"></ul>
+    </section>
+
+    <details class="diagnostics">
+      <summary>Diagnostics</summary>
+      <div id="diagnostics" class="body"></div>
+    </details>
+
+    <p class="footer-note">Auto-refreshes every 60s · <span id="last-refresh"></span></p>
+  </div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-panel card">
+      <button class="modal-close icon-btn" data-close-modal aria-label="Close">✕</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

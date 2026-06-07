@@ -13,8 +13,19 @@ from agent.health import evaluate_service, host_disk_low, host_oom_recent
 from agent.incidents import IncidentStore
 from agent.logs import extract_lock_hints, scan_log_issues, tail_service_logs
 from agent.remediate import has_open_pending_for_service, remediate
+from agent.snooze import is_snoozed
 
 from agent.discovery import ComposeProject
+
+
+def _service_status(health, service_issues: list[str]) -> str:
+    if not health.container_id or health.status != "running":
+        return "critical"
+    if health.health_status == "unhealthy":
+        return "critical"
+    if service_issues:
+        return "warning"
+    return "healthy"
 
 
 def _re_evaluate(project: ComposeProject, service: str) -> bool:
@@ -49,6 +60,7 @@ def run_once() -> int:
                 "pending": 0,
                 "resolved": 0,
                 "unresolved": 0,
+                "services": [],
             }
         )
         return 0
@@ -58,6 +70,7 @@ def run_once() -> int:
     unresolved = 0
     resolved = 0
     pending = 0
+    service_health_rows: list[dict] = []
 
     activity.record(
         f"Scan started: {len(projects)} compose project(s)",
@@ -76,10 +89,32 @@ def run_once() -> int:
             logs = tail_service_logs(project, service, tail_lines)
             log_issues = scan_log_issues(logs, log_patterns)
             lock_hints = extract_lock_hints(logs)
-            issues = list(health.issues) + log_issues + host_issues
+            service_issues = list(health.issues) + log_issues
+            snoozed = is_snoozed(data_dir, health.project, health.service)
+            service_health_rows.append(
+                {
+                    "project": health.project,
+                    "service": health.service,
+                    "status": _service_status(health, service_issues),
+                    "snoozed": snoozed,
+                    "issues": service_issues[:5],
+                    "container_status": health.status,
+                    "app_version": health.app_version,
+                }
+            )
 
-            if not issues:
+            if not service_issues:
                 continue
+            if snoozed:
+                activity.record(
+                    "Skipped snoozed service",
+                    category="snooze",
+                    project=health.project,
+                    service=health.service,
+                )
+                continue
+
+            issues = service_issues + host_issues
 
             issue_summary = "; ".join(issues[:5])
             past = store.find_similar(health.project, health.service, issue_summary, limit=3)
@@ -183,6 +218,7 @@ def run_once() -> int:
             "resolved": resolved,
             "pending": pending,
             "unresolved": unresolved,
+            "services": service_health_rows,
         }
     )
     return 0 if unresolved == 0 else 1

@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+from agent.activity import ActivityLog
 from agent.config import ensure_data_dirs, load_config, load_secrets
 from agent.discovery import discover_compose_projects, list_compose_services
 from agent.email_sender import send_unresolved_alert
@@ -26,6 +27,7 @@ def run_once() -> int:
     data_dir = Path(cfg["data_dir"])
     ensure_data_dirs(data_dir)
     store = IncidentStore(data_dir)
+    activity = ActivityLog(data_dir)
 
     host_issues: list[str] = []
     disk_issue = host_disk_low(int(cfg.get("disk_warn_percent_free", 15)))
@@ -37,12 +39,32 @@ def run_once() -> int:
 
     projects = discover_compose_projects(cfg["compose_search_paths"])
     if not projects:
-        print("No compose projects found", file=sys.stderr)
+        msg = "No compose projects found"
+        activity.record(msg, level="warn", category="scan")
+        print(msg, file=sys.stderr)
+        activity.write_heartbeat(
+            {
+                "data_dir": str(data_dir),
+                "projects": 0,
+                "pending": 0,
+                "resolved": 0,
+                "unresolved": 0,
+            }
+        )
         return 0
 
     log_patterns = cfg.get("log_error_patterns", [])
     tail_lines = int(cfg.get("log_tail_lines", 80))
     unresolved = 0
+    resolved = 0
+    pending = 0
+
+    activity.record(
+        f"Scan started: {len(projects)} compose project(s)",
+        category="scan",
+    )
+    for issue in host_issues:
+        activity.record(issue, level="warn", category="host")
 
     for project in projects:
         services = list_compose_services(project)
@@ -75,12 +97,30 @@ def run_once() -> int:
 
             if result.pending_approval:
                 store.append(result.incident)
-                print(f"Pending approval: {result.incident.id} ({health.project}/{health.service})")
+                pending += 1
+                msg = f"Pending approval: {result.incident.id}"
+                activity.record(
+                    msg,
+                    category="pending",
+                    project=health.project,
+                    service=health.service,
+                    incident_id=result.incident.id,
+                )
+                print(f"{msg} ({health.project}/{health.service})")
                 continue
 
             if _re_evaluate(project, service):
                 result.incident.outcome = "resolved"
                 store.append(result.incident)
+                resolved += 1
+                msg = f"Resolved after remediation"
+                activity.record(
+                    msg,
+                    category="resolved",
+                    project=health.project,
+                    service=health.service,
+                    incident_id=result.incident.id,
+                )
                 print(f"Resolved: {health.project}/{health.service}")
                 continue
 
@@ -95,11 +135,41 @@ def run_once() -> int:
             store.append(result.incident)
 
             if send_unresolved_alert(result.incident, secrets):
+                msg = "Emailed unresolved incident"
+                activity.record(
+                    msg,
+                    category="email",
+                    project=health.project,
+                    service=health.service,
+                    incident_id=result.incident.id,
+                )
                 print(f"Emailed unresolved: {health.project}/{health.service}")
             else:
+                msg = "Unresolved (email not sent)"
+                activity.record(
+                    msg,
+                    level="warn",
+                    category="email",
+                    project=health.project,
+                    service=health.service,
+                    incident_id=result.incident.id,
+                )
                 print(f"Unresolved (email not configured): {health.project}/{health.service}", file=sys.stderr)
             unresolved += 1
 
+    activity.record(
+        f"Scan complete: {resolved} resolved, {pending} pending, {unresolved} unresolved",
+        category="scan",
+    )
+    activity.write_heartbeat(
+        {
+            "data_dir": str(data_dir),
+            "projects": len(projects),
+            "resolved": resolved,
+            "pending": pending,
+            "unresolved": unresolved,
+        }
+    )
     return 0 if unresolved == 0 else 1
 
 

@@ -9,6 +9,6 @@ services:
     ports:
       - "127.0.0.1:8787:8787"
     volumes:
-      - ${CONTAINER_AGENT_DATA_DIR:-${HOME}/.local/share/container-agent}:/data:rw
+      - ${CONTAINER_AGENT_DATA_DIR:-${HOME}/.local/share/container-agent}:/data:rw,Z
     environment:
       CONTAINER_AGENT_DATA_DIR: /data

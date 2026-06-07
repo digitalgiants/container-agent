@@ -51,6 +51,14 @@ def cmd_status() -> int:
     if incidents.exists():
         lines = incidents.read_text().splitlines()
         print(f"incidents logged: {len(lines)}")
+    activity = data_dir / "activity.jsonl"
+    if activity.exists():
+        lines = activity.read_text().splitlines()
+        print(f"activity logged: {len(lines)}")
+    heartbeat = data_dir / "heartbeat.json"
+    if heartbeat.exists():
+        payload = json.loads(heartbeat.read_text())
+        print(f"last scan: {payload.get('ts', 'unknown')}")
     return 0
 
 

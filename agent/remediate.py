@@ -219,6 +219,31 @@ def apply_pending_if_approved(data_dir: Path, incident_id: str) -> bool:
     return approval.exists()
 
 
+def has_open_pending_for_service(
+    data_dir: Path,
+    project: str,
+    service: str,
+    *,
+    except_incident_id: str | None = None,
+) -> bool:
+    pending_dir = data_dir / "pending"
+    if not pending_dir.exists():
+        return False
+    for path in pending_dir.glob("*.json"):
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        incident_id = payload.get("incident_id")
+        if except_incident_id and incident_id == except_incident_id:
+            continue
+        if payload.get("project") != project or payload.get("service") != service:
+            continue
+        if incident_id and not apply_pending_if_approved(data_dir, str(incident_id)):
+            return True
+    return False
+
+
 def remediate(
     health: ServiceHealth,
     project: ComposeProject,

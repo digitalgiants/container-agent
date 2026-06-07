@@ -7,12 +7,12 @@ from pathlib import Path
 from agent.activity import ActivityLog
 from agent.config import ensure_data_dirs, load_config, load_secrets
 from agent.discovery import discover_compose_projects, list_compose_services
-from agent.email_sender import send_unresolved_alert
+from agent.email_sender import send_approval_required_alert
 from agent.gemini_client import analyze_incident
 from agent.health import evaluate_service, host_disk_low, host_oom_recent
 from agent.incidents import IncidentStore
 from agent.logs import extract_lock_hints, scan_log_issues, tail_service_logs
-from agent.remediate import remediate
+from agent.remediate import has_open_pending_for_service, remediate
 
 from agent.discovery import ComposeProject
 
@@ -107,6 +107,35 @@ def run_once() -> int:
                     incident_id=result.incident.id,
                 )
                 print(f"{msg} ({health.project}/{health.service})")
+
+                pending_payload: dict = {}
+                pending_file = data_dir / "pending" / f"{result.incident.id}.json"
+                if pending_file.exists():
+                    try:
+                        pending_payload = json.loads(pending_file.read_text())
+                    except json.JSONDecodeError:
+                        pending_payload = {}
+
+                should_email = not has_open_pending_for_service(
+                    data_dir,
+                    health.project,
+                    health.service,
+                    except_incident_id=result.incident.id,
+                )
+                if should_email and send_approval_required_alert(
+                    result.incident,
+                    pending_payload,
+                    secrets,
+                    web_ui_url=str(cfg.get("web_ui_url", "http://127.0.0.1:8787")),
+                ):
+                    activity.record(
+                        "Emailed approval request",
+                        category="email",
+                        project=health.project,
+                        service=health.service,
+                        incident_id=result.incident.id,
+                    )
+                    print(f"Emailed approval required: {health.project}/{health.service}")
                 continue
 
             if _re_evaluate(project, service):
@@ -133,28 +162,14 @@ def run_once() -> int:
             result.incident.recommended_commands = commands
             result.incident.outcome = "unresolved"
             store.append(result.incident)
-
-            if send_unresolved_alert(result.incident, secrets):
-                msg = "Emailed unresolved incident"
-                activity.record(
-                    msg,
-                    category="email",
-                    project=health.project,
-                    service=health.service,
-                    incident_id=result.incident.id,
-                )
-                print(f"Emailed unresolved: {health.project}/{health.service}")
-            else:
-                msg = "Unresolved (email not sent)"
-                activity.record(
-                    msg,
-                    level="warn",
-                    category="email",
-                    project=health.project,
-                    service=health.service,
-                    incident_id=result.incident.id,
-                )
-                print(f"Unresolved (email not configured): {health.project}/{health.service}", file=sys.stderr)
+            activity.record(
+                "Unresolved after auto-fix (logged, no email)",
+                category="unresolved",
+                project=health.project,
+                service=health.service,
+                incident_id=result.incident.id,
+            )
+            print(f"Unresolved (logged): {health.project}/{health.service}", file=sys.stderr)
             unresolved += 1
 
     activity.record(

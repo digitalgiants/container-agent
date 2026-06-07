@@ -379,6 +379,26 @@ code {
   color: var(--muted);
 }
 
+.banner {
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.86rem;
+  text-align: center;
+}
+
+.banner.warn {
+  border-color: rgba(240, 180, 41, 0.45);
+  color: var(--warning);
+}
+
+.banner.error {
+  border-color: rgba(240, 113, 120, 0.45);
+  color: var(--danger);
+}
+
 .hidden { display: none !important; }
 
 .center-page {

@@ -146,8 +146,17 @@ install_systemd_user_units() {
   log "Timer active: systemctl --user status container-agent.timer"
 }
 
+write_compose_env() {
+  local data_dir
+  data_dir="$("${VENV_DIR}/bin/python" -c "from agent.config import load_config; print(load_config()['data_dir'])")"
+  cat > "${REPO_DIR}/compose/.env" <<EOF
+CONTAINER_AGENT_DATA_DIR=${data_dir}
+EOF
+  log "Wrote compose/.env → ${data_dir}"
+}
+
 start_web_ui() {
-  export CONTAINER_AGENT_DATA_DIR="$DATA_DIR"
+  write_compose_env
   if [[ ! -f "${REPO_DIR}/web/static/index.html" ]]; then
     die "Missing ${REPO_DIR}/web/static/index.html — run git pull for the full UI"
   fi

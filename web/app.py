@@ -174,16 +174,36 @@ def _approval_history(limit: int = 50) -> list[dict]:
     return _read_jsonl(DATA_DIR / "approvals" / "history.jsonl", limit=limit)
 
 
+def _file_info(path: Path) -> dict[str, Any]:
+    info = {"path": str(path), "exists": path.exists(), "readable": False, "lines": 0}
+    if not path.exists():
+        return info
+    info["readable"] = os.access(path, os.R_OK)
+    try:
+        info["lines"] = len(path.read_text().splitlines())
+    except OSError:
+        info["readable"] = False
+    return info
+
+
 def _status() -> dict[str, Any]:
     incidents_path = DATA_DIR / "incidents.jsonl"
     activity_path = DATA_DIR / "activity.jsonl"
+    heartbeat_path = DATA_DIR / "heartbeat.json"
     pending_dir = DATA_DIR / "pending"
     heartbeat = _heartbeat() or {}
+    activity_info = _file_info(activity_path)
+    agent_data_dir = heartbeat.get("data_dir")
+    has_scan_data = bool(heartbeat.get("ts")) and activity_info["lines"] > 0
     return {
         "data_dir": str(DATA_DIR),
+        "agent_data_dir": agent_data_dir,
         "data_dir_readable": os.access(DATA_DIR, os.R_OK),
-        "incidents_count": len(incidents_path.read_text().splitlines()) if incidents_path.exists() else 0,
-        "activity_count": len(activity_path.read_text().splitlines()) if activity_path.exists() else 0,
+        "has_scan_data": has_scan_data,
+        "incidents_count": _file_info(incidents_path)["lines"],
+        "activity_count": activity_info["lines"],
+        "activity_readable": activity_info["readable"],
+        "heartbeat_readable": _file_info(heartbeat_path)["readable"],
         "pending_count": len(list(pending_dir.glob("*.json"))) if pending_dir.exists() else 0,
         "snooze_count": len(_snoozes()),
         "heartbeat": heartbeat,

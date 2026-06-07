@@ -97,6 +97,33 @@
     }
   }
 
+  function renderBanner() {
+    const el = $("banner");
+    if (!el || !state.status) return;
+    const s = state.status;
+    const hb = s.heartbeat || {};
+    el.classList.add("hidden");
+    el.classList.remove("warn", "error");
+
+    if (!s.data_dir_readable) {
+      el.textContent = "UI cannot read /data — check Podman volume mount and SELinux (:z label). Run: container-agent sync-ui";
+      el.classList.remove("hidden");
+      el.classList.add("error");
+      return;
+    }
+    if (s.activity_count === 0 && !hb.ts) {
+      el.textContent = "No scan data in the UI volume yet. On the host run: container-agent run — then container-agent sync-ui and recreate the UI container.";
+      el.classList.remove("hidden");
+      el.classList.add("warn");
+      return;
+    }
+    if (!s.activity_readable && s.activity_count === 0 && hb.ts) {
+      el.textContent = "Scan ran on the host but the UI cannot read activity data (SELinux/volume). Run: container-agent sync-ui && podman compose -f compose/docker-compose.yml up -d --force-recreate";
+      el.classList.remove("hidden");
+      el.classList.add("error");
+    }
+  }
+
   function renderStats() {
     const hb = state.status?.heartbeat || {};
     const el = $("stats");
@@ -274,11 +301,14 @@
     const hb = s.heartbeat || {};
     el.innerHTML = `
       <div>UI data dir · <code>${esc(s.data_dir)}</code> (${s.data_dir_readable ? "readable" : "not readable"})</div>
-      <div>Agent data dir · <code>${esc(hb.data_dir || "—")}</code></div>
-      <div>Records · incidents=${s.incidents_count}, activity=${s.activity_count}, pending=${s.pending_count}, snoozes=${s.snooze_count}</div>`;
+      <div>Agent data dir · <code>${esc(s.agent_data_dir || hb.data_dir || "—")}</code></div>
+      <div>Scan data visible · ${s.has_scan_data ? "yes" : "no"}</div>
+      <div>Records · incidents=${s.incidents_count}, activity=${s.activity_count}, pending=${s.pending_count}, snoozes=${s.snooze_count}</div>
+      <div>Activity file readable · ${s.activity_readable ? "yes" : "no"}</div>`;
   }
 
   function render() {
+    renderBanner();
     renderStats();
     renderHealth();
     renderSnoozes();

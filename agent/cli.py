@@ -65,6 +65,24 @@ def cmd_status() -> int:
     if heartbeat.exists():
         payload = json.loads(heartbeat.read_text())
         print(f"last scan: {payload.get('ts', 'unknown')}")
+        print(f"services in last scan: {len(payload.get('services') or [])}")
+    compose_env = Path(__file__).resolve().parent.parent / "compose" / ".env"
+    if compose_env.exists():
+        print(f"ui compose env: {compose_env.read_text().strip()}")
+    else:
+        print("ui compose env: missing — run install.sh or: container-agent sync-ui", file=sys.stderr)
+    return 0
+
+
+def cmd_sync_ui() -> int:
+    cfg = load_config()
+    data_dir = cfg["data_dir"]
+    repo_dir = Path(__file__).resolve().parent.parent
+    compose_env = repo_dir / "compose" / ".env"
+    compose_env.write_text(f"CONTAINER_AGENT_DATA_DIR={data_dir}\n")
+    print(f"Wrote {compose_env}")
+    print("Recreate the UI container:")
+    print(f"  podman compose -f {repo_dir}/compose/docker-compose.yml up -d --force-recreate")
     return 0
 
 
@@ -78,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="Show agent status")
     sub.add_parser("run", help="Run one monitoring cycle now")
     sub.add_parser("discover", help="List compose projects found under configured search paths")
+    sub.add_parser("sync-ui", help="Write compose/.env so the web UI uses the same data_dir")
 
     args = parser.parse_args(argv)
     if args.command == "approve":
@@ -90,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_once()
     if args.command == "discover":
         return cmd_discover()
+    if args.command == "sync-ui":
+        return cmd_sync_ui()
     return 1
 
 

@@ -1,5 +1,8 @@
 # Copy to ~/.config/container-agent/config.yaml during install (install.sh does this).
 
+# Must match compose/.env CONTAINER_AGENT_DATA_DIR (install.sh keeps them in sync).
+data_dir: ~/.local/share/container-agent
+
 automation_mode: human_in_loop  # human_in_loop | full_auto
 poll_interval_minutes: 5
 max_restarts_per_hour: 5

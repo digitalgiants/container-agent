@@ -59,6 +59,7 @@ body {
 
 .toolbar {
   display: flex;
+  width: 100%;
   justify-content: flex-end;
   align-items: center;
   gap: 0.5rem;
@@ -451,4 +452,54 @@ code {
   position: absolute;
   top: 0.65rem;
   right: 0.65rem;
+}
+
+.user-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.toolbar-logout { margin-top: 0; }
+
+.login-card {
+  max-width: 380px;
+  margin: 0 auto;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+
+.field input {
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.login-error {
+  color: var(--danger);
+  font-size: 0.84rem;
+  margin: 0;
+}
+
+.login-hint {
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+  text-decoration: underline;
 }

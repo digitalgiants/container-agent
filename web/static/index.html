@@ -12,7 +12,9 @@
 
     <header class="hero">
       <div class="toolbar">
+        <span id="user-label" class="user-label"></span>
         <button id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+        <button id="logout-btn" class="btn-secondary btn-sm toolbar-logout" type="button">Logout</button>
         <span id="refresh-indicator" class="refresh-indicator">Live</span>
       </div>
       <h1>Container Agent</h1>
@@ -74,7 +76,7 @@
       <div id="diagnostics" class="body"></div>
     </details>
 
-    <p class="footer-note">Auto-refreshes every 60s · <span id="last-refresh"></span></p>
+    <p class="footer-note">Auto-refreshes every 60s · <span id="last-refresh"></span> · <button id="logout-footer" class="link-btn" type="button">Logout</button></p>
   </div>
 
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">

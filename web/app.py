@@ -7,9 +7,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+
+from auth import (
+    approve_path_with_token,
+    authenticate,
+    clear_session_cookie,
+    create_session_cookie,
+    get_session_user,
+    is_public_path,
+    require_user,
+    verify_and_consume_approval_token,
+)
 
 DATA_DIR = Path(os.environ.get("CONTAINER_AGENT_DATA_DIR", "/data"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -20,6 +31,23 @@ STATIC_ASSETS = {
 }
 
 app = FastAPI(title="Container Agent", version=APP_VERSION)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if is_public_path(path) or approve_path_with_token(path, request):
+        return await call_next(request)
+    if get_session_user(request):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+    return RedirectResponse(url="/login", status_code=302)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 def _static_status() -> dict[str, Any]:
@@ -310,6 +338,35 @@ def _clear_snooze(project: str, service: str) -> bool:
     return True
 
 
+@app.get("/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    login = STATIC_DIR / "login.html"
+    if not login.is_file():
+        raise HTTPException(status_code=503, detail="Login page missing")
+    return HTMLResponse(login.read_text())
+
+
+@app.post("/api/login")
+def api_login(req: LoginRequest, request: Request) -> JSONResponse:
+    if not authenticate(req.username, req.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    response = JSONResponse({"status": "ok", "user": req.username.strip()})
+    create_session_cookie(req.username.strip(), request, response)
+    return response
+
+
+@app.post("/api/logout")
+def api_logout() -> JSONResponse:
+    response = JSONResponse({"status": "logged_out"})
+    clear_session_cookie(response)
+    return response
+
+
+@app.get("/api/me")
+def api_me(user: str = Depends(require_user)) -> dict[str, str]:
+    return {"user": user}
+
+
 @app.get("/", response_class=HTMLResponse)
 def home() -> HTMLResponse:
     index = STATIC_DIR / "index.html"
@@ -319,7 +376,7 @@ def home() -> HTMLResponse:
 
 
 @app.get("/incident/{incident_id}", response_class=HTMLResponse)
-def incident_page(incident_id: str) -> str:
+def incident_page(incident_id: str, _user: str = Depends(require_user)) -> str:
     incident = _find_incident(incident_id)
     if not incident:
         body = f"""
@@ -359,17 +416,17 @@ def incident_page(incident_id: str) -> str:
 
 
 @app.get("/api/pending")
-def api_pending() -> list[dict]:
+def api_pending(_user: str = Depends(require_user)) -> list[dict]:
     return _pending()
 
 
 @app.get("/api/incidents")
-def api_incidents() -> list[dict]:
+def api_incidents(_user: str = Depends(require_user)) -> list[dict]:
     return _incidents()
 
 
 @app.get("/api/incidents/{incident_id}")
-def api_incident(incident_id: str) -> dict:
+def api_incident(incident_id: str, _user: str = Depends(require_user)) -> dict:
     row = _find_incident(incident_id)
     if not row:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -377,47 +434,61 @@ def api_incident(incident_id: str) -> dict:
 
 
 @app.get("/api/activity")
-def api_activity() -> list[dict]:
+def api_activity(_user: str = Depends(require_user)) -> list[dict]:
     return _activity()
 
 
 @app.get("/api/status")
-def api_status() -> dict:
+def api_status(_user: str = Depends(require_user)) -> dict:
     return _status()
 
 
 @app.get("/api/snoozes")
-def api_snoozes() -> list[dict]:
+def api_snoozes(_user: str = Depends(require_user)) -> list[dict]:
     return _snoozes()
 
 
 @app.get("/api/approvals/history")
-def api_approval_history() -> list[dict]:
+def api_approval_history(_user: str = Depends(require_user)) -> list[dict]:
     return _approval_history()
 
 
 @app.post("/api/snooze")
-def api_snooze(req: SnoozeRequest) -> dict:
+def api_snooze(req: SnoozeRequest, _user: str = Depends(require_user)) -> dict:
     return _write_snooze(req.project, req.service, req.hours, req.reason)
 
 
 @app.delete("/api/snooze/{project}/{service}")
-def api_clear_snooze(project: str, service: str) -> dict:
+def api_clear_snooze(project: str, service: str, _user: str = Depends(require_user)) -> dict:
     if not _clear_snooze(project, service):
         raise HTTPException(status_code=404, detail="Snooze not found")
     return {"status": "cleared", "project": project, "service": service}
 
 
 @app.post("/api/approve/{incident_id}")
-def approve_api(incident_id: str, request: Request) -> dict:
-    approved_by = request.headers.get("x-approved-by", "web-api")
-    return _do_approve(incident_id, approved_by=approved_by)
+def approve_api(incident_id: str, user: str = Depends(require_user)) -> dict:
+    return _do_approve(incident_id, approved_by=user)
 
 
 @app.get("/approve/{incident_id}", response_class=HTMLResponse)
 def approve_page(incident_id: str, request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-user") or request.headers.get("remote-user")
-    approved_by = forwarded or "web"
+    token = request.query_params.get("token")
+    session_user = get_session_user(request)
+    if session_user:
+        approved_by = session_user
+    elif token and verify_and_consume_approval_token(incident_id, token):
+        approved_by = "email-link"
+    elif token:
+        body = """
+        <div class="center-page">
+          <div class="icon-lg">✕</div>
+          <h1>Invalid or expired link</h1>
+          <p>This approval link is no longer valid. Log in to approve from the dashboard.</p>
+          <p><a class="btn" href="/login">Sign in</a></p>
+        </div>"""
+        return _page_shell("Invalid link", body, page="approve")
+    else:
+        return RedirectResponse(url="/login", status_code=302)
     try:
         result = _do_approve(incident_id, approved_by=approved_by)
     except HTTPException:

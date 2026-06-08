@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Container Agent</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="login">
+  <div class="page">
+    <header class="hero">
+      <h1>Container Agent</h1>
+      <p>Sign in to view the dashboard</p>
+    </header>
+    <form id="login-form" class="card login-card">
+      <label class="field">
+        <span>Username</span>
+        <input id="username" name="username" type="text" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="login-error hidden"></p>
+      <button class="btn" type="submit">Sign in</button>
+      <p class="muted login-hint">Sessions last 30 minutes. HTTPS required except on localhost.</p>
+    </form>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

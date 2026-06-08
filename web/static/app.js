@@ -71,10 +71,19 @@
     }
   }
 
-  async function fetchJson(url) {
-    const r = await fetch(url);
+  async function fetchJson(url, options) {
+    const r = await fetch(url, { credentials: "same-origin", ...options });
+    if (r.status === 401) {
+      window.location.href = "/login";
+      throw new Error("unauthenticated");
+    }
     if (!r.ok) throw new Error(url + " " + r.status);
     return r.json();
+  }
+
+  async function logout() {
+    await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+    window.location.href = "/login";
   }
 
   async function loadDashboard() {
@@ -413,10 +422,61 @@
     });
   }
 
+  async function loadUser() {
+    try {
+      const me = await fetchJson("/api/me");
+      const label = $("user-label");
+      if (label && me.user) label.textContent = me.user;
+    } catch (_) {
+      /* redirect handled in fetchJson */
+    }
+  }
+
+  function initLogout() {
+    ["logout-btn", "logout-footer"].forEach((id) => {
+      const btn = $(id);
+      if (btn) btn.addEventListener("click", logout);
+    });
+  }
+
+  function initLogin() {
+    const form = $("login-form");
+    if (!form) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = $("login-error");
+      const username = $("username").value.trim();
+      const password = $("password").value;
+      try {
+        const r = await fetch("/api/login", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        if (!r.ok) {
+          if (err) {
+            err.textContent = "Invalid username or password";
+            err.classList.remove("hidden");
+          }
+          return;
+        }
+        window.location.href = "/";
+      } catch (_) {
+        if (err) {
+          err.textContent = "Login failed";
+          err.classList.remove("hidden");
+        }
+      }
+    });
+  }
+
   function initDashboard() {
     initTheme();
     initModal();
     initFilters();
+    initLogout();
+    loadUser();
     loadDashboard().catch(() => {
       const ind = $("refresh-indicator");
       if (ind) {
@@ -438,7 +498,9 @@
   document.addEventListener("DOMContentLoaded", () => {
     const page = document.body.dataset.page || "dashboard";
     initTheme();
-    if (page === "dashboard") {
+    if (page === "login") {
+      initLogin();
+    } else if (page === "dashboard") {
       initDashboard();
     } else {
       initIncidentPage();

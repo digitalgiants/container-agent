@@ -14,6 +14,7 @@ from agent.incidents import IncidentStore
 from agent.logs import extract_lock_hints, scan_log_issues, tail_service_logs
 from agent.remediate import has_open_pending_for_service, remediate
 from agent.snooze import is_snoozed
+from agent.ui_auth import create_approval_token
 
 from agent.discovery import ComposeProject
 
@@ -157,11 +158,13 @@ def run_once() -> int:
                     health.service,
                     except_incident_id=result.incident.id,
                 )
+                approve_token = create_approval_token(data_dir, result.incident.id) if should_email else None
                 if should_email and send_approval_required_alert(
                     result.incident,
                     pending_payload,
                     secrets,
                     web_ui_url=str(cfg.get("web_ui_url", "http://127.0.0.1:8787")),
+                    approve_token=approve_token,
                 ):
                     activity.record(
                         "Emailed approval request",

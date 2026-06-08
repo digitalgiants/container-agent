@@ -15,8 +15,17 @@ def _build_approval_body(
     incident: Incident,
     pending: dict[str, Any],
     web_ui_url: str,
+    *,
+    approve_token: str | None = None,
 ) -> str:
     paths = "\n".join(f"  - {p}" for p in pending.get("paths") or [])
+    base = web_ui_url.rstrip("/")
+    if approve_token:
+        approve_url = f"{base}/approve/{incident.id}?token={approve_token}"
+        approve_note = "One-time link (no login required):"
+    else:
+        approve_url = f"{base}/approve/{incident.id}"
+        approve_note = "Approve in browser (login required):"
     return f"""Container-agent approval required
 
 A fix is queued and needs your approval before the agent can apply it.
@@ -30,8 +39,8 @@ Action: {pending.get("action", "unknown")}
 Paths:
 {paths or "  (none)"}
 
-Approve in browser:
-  {web_ui_url.rstrip("/")}/approve/{incident.id}
+{approve_note}
+  {approve_url}
 
 Or on the server:
   container-agent approve {incident.id}
@@ -84,9 +93,10 @@ def send_approval_required_alert(
     secrets: dict[str, str],
     *,
     web_ui_url: str = "http://127.0.0.1:8787",
+    approve_token: str | None = None,
 ) -> bool:
     subject = f"[container-agent] approval required: {incident.project}/{incident.service}"
-    body = _build_approval_body(incident, pending, web_ui_url)
+    body = _build_approval_body(incident, pending, web_ui_url, approve_token=approve_token)
     try:
         if _via_msmtp(body, secrets):
             return True

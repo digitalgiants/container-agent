@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from pathlib import Path
 
 from agent.approvals import log_approval
-from agent.config import load_config
+from agent.config import DEFAULT_CONFIG_DIR, load_config
 from agent.discovery import discover_compose_projects
+from agent.ui_auth import ensure_session_secret, load_ui_auth, write_ui_auth
 
 
 def cmd_approve(incident_id: str) -> int:
@@ -77,12 +79,38 @@ def cmd_status() -> int:
 def cmd_sync_ui() -> int:
     cfg = load_config()
     data_dir = cfg["data_dir"]
+    config_dir = DEFAULT_CONFIG_DIR
     repo_dir = Path(__file__).resolve().parent.parent
     compose_env = repo_dir / "compose" / ".env"
-    compose_env.write_text(f"CONTAINER_AGENT_DATA_DIR={data_dir}\n")
+    compose_env.write_text(
+        f"CONTAINER_AGENT_DATA_DIR={data_dir}\nCONTAINER_AGENT_CONFIG_DIR={config_dir}\n"
+    )
     print(f"Wrote {compose_env}")
     print("Recreate the UI container:")
     print(f"  podman compose -f {repo_dir}/compose/docker-compose.yml up -d --force-recreate")
+    return 0
+
+
+def cmd_set_ui_password() -> int:
+    config_dir = DEFAULT_CONFIG_DIR
+    existing = load_ui_auth(config_dir)
+    default_user = (existing or {}).get("username", "")
+    username = input(f"UI username [{default_user}]: ").strip() or default_user
+    if not username:
+        print("Username required", file=sys.stderr)
+        return 1
+    password = getpass.getpass("New UI password: ")
+    confirm = getpass.getpass("Confirm password: ")
+    if password != confirm:
+        print("Passwords do not match", file=sys.stderr)
+        return 1
+    if not password:
+        print("Password required", file=sys.stderr)
+        return 1
+    write_ui_auth(config_dir, username, password)
+    ensure_session_secret(config_dir / "secrets.env")
+    print(f"Updated UI login for {username}")
+    print("Recreate UI container: container-agent sync-ui && podman compose -f ~/container-agent/compose/docker-compose.yml up -d --force-recreate")
     return 0
 
 
@@ -97,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("run", help="Run one monitoring cycle now")
     sub.add_parser("discover", help="List compose projects found under configured search paths")
     sub.add_parser("sync-ui", help="Write compose/.env so the web UI uses the same data_dir")
+    sub.add_parser("set-ui-password", help="Set or change the web UI login password")
 
     args = parser.parse_args(argv)
     if args.command == "approve":
@@ -111,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_discover()
     if args.command == "sync-ui":
         return cmd_sync_ui()
+    if args.command == "set-ui-password":
+        return cmd_set_ui_password()
     return 1
 
 

@@ -146,13 +146,35 @@ install_systemd_user_units() {
   log "Timer active: systemctl --user status container-agent.timer"
 }
 
+write_ui_auth() {
+  "${VENV_DIR}/bin/python" -c "from agent.ui_auth import ensure_session_secret; from pathlib import Path; ensure_session_secret(Path('${CONFIG_DIR}/secrets.env'))"
+  if [[ -f "${CONFIG_DIR}/ui-auth.json" ]]; then
+    log "Keeping existing ${CONFIG_DIR}/ui-auth.json (change: container-agent set-ui-password)"
+    return
+  fi
+  echo
+  log "Web UI login — password stored as bcrypt hash only (${CONFIG_DIR}/ui-auth.json)"
+  local ui_user ui_pass ui_pass2
+  prompt_value ui_user "UI username"
+  prompt_secret ui_pass "UI password"
+  prompt_secret ui_pass2 "Confirm UI password"
+  if [[ "$ui_pass" != "$ui_pass2" ]]; then
+    die "UI passwords do not match"
+  fi
+  CONFIG_DIR="${CONFIG_DIR}" UI_USER="${ui_user}" UI_PASS="${ui_pass}" \
+    "${VENV_DIR}/bin/python" -c "import os; from pathlib import Path; from agent.ui_auth import write_ui_auth; write_ui_auth(Path(os.environ['CONFIG_DIR']), os.environ['UI_USER'], os.environ['UI_PASS'])"
+  chmod 600 "${CONFIG_DIR}/ui-auth.json"
+  log "Wrote ${CONFIG_DIR}/ui-auth.json"
+}
+
 write_compose_env() {
   local data_dir
   data_dir="$("${VENV_DIR}/bin/python" -c "from agent.config import load_config; print(load_config()['data_dir'])")"
   cat > "${REPO_DIR}/compose/.env" <<EOF
 CONTAINER_AGENT_DATA_DIR=${data_dir}
+CONTAINER_AGENT_CONFIG_DIR=${CONFIG_DIR}
 EOF
-  log "Wrote compose/.env → ${data_dir}"
+  log "Wrote compose/.env → data=${data_dir} config=${CONFIG_DIR}"
 }
 
 start_web_ui() {
@@ -181,6 +203,7 @@ main() {
   setup_venv
   write_config "$COMPOSE_PATH"
   write_secrets
+  write_ui_auth
   write_msmtp
   install_cli
   install_systemd_user_units
@@ -192,7 +215,8 @@ main() {
   echo "  Secrets: ${CONFIG_DIR}/secrets.env"
   echo "  Data:    ${DATA_DIR}/incidents.jsonl"
   echo "  Status:  container-agent status"
-  echo "  Approve: container-agent approve <incident-id>  OR  web UI /approve/<id>"
+  echo "  UI login: container-agent set-ui-password"
+  echo "  Approve: container-agent approve <incident-id>  OR  web UI /approve/<id>?token=..."
   echo "  Logs:    journalctl --user -u container-agent.service -n 50 --no-pager"
   echo
   echo "Re-run this script safely to upgrade deps or repair systemd/web UI."

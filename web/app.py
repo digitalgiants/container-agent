@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -162,8 +162,20 @@ def _find_incident(incident_id: str) -> dict | None:
     return None
 
 
-def _activity(limit: int = 100) -> list[dict]:
-    return _read_jsonl(DATA_DIR / "activity.jsonl", limit=limit)
+def _activity_page(limit: int = 50, offset: int = 0) -> tuple[list[dict], bool]:
+    path = DATA_DIR / "activity.jsonl"
+    if not path.exists():
+        return [], False
+    rows: list[dict] = []
+    for line in path.read_text().splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    rows.reverse()
+    page = rows[offset : offset + limit]
+    has_more = offset + limit < len(rows)
+    return page, has_more
 
 
 def _heartbeat() -> dict | None:
@@ -476,8 +488,13 @@ def api_incident(incident_id: str, _user: str = Depends(require_user)) -> dict:
 
 
 @app.get("/api/activity")
-def api_activity(_user: str = Depends(require_user)) -> list[dict]:
-    return _activity()
+def api_activity(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _user: str = Depends(require_user),
+) -> dict[str, Any]:
+    items, has_more = _activity_page(limit=limit, offset=offset)
+    return {"items": items, "has_more": has_more, "offset": offset, "limit": limit}
 
 
 @app.get("/api/status")

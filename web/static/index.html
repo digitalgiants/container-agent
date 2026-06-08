@@ -17,7 +17,7 @@
         <button id="logout-btn" class="btn-secondary btn-sm toolbar-logout" type="button">Logout</button>
         <span id="refresh-indicator" class="refresh-indicator">Live</span>
       </div>
-      <h1>Container Agent</h1>
+      <h1>Master Control Program</h1>
       <p>Monitor Podman Compose stacks · approve fixes · review scan history</p>
     </header>
 
@@ -52,8 +52,9 @@
         <h2>Agent activity</h2>
         <input id="activity-filter" class="filter-input" type="search" placeholder="Filter activity…" aria-label="Filter activity">
       </div>
-      <div class="scroll-panel">
-        <ul id="activity" class="feed"></ul>
+      <div id="activity-panel" class="scroll-panel activity-panel">
+        <div id="activity" class="activity-stream" role="log" aria-live="polite"></div>
+        <div id="activity-status" class="activity-status muted"></div>
       </div>
     </section>
 

@@ -3,14 +3,21 @@
 
   const REFRESH_MS = 60_000;
   const THEME_KEY = "container-agent-theme";
+  const ACTIVITY_PAGE = 50;
 
   let state = {
     status: null,
     pending: [],
     incidents: [],
-    activity: [],
     snoozes: [],
     approvals: [],
+  };
+
+  let activityState = {
+    items: [],
+    offset: 0,
+    hasMore: true,
+    loading: false,
   };
 
   function $(id) {
@@ -86,16 +93,54 @@
     window.location.href = "/login";
   }
 
+  async function loadActivity(append) {
+    if (activityState.loading) return;
+    if (append && !activityState.hasMore) return;
+
+    const panel = $("activity-panel");
+    const prevHeight = panel ? panel.scrollHeight : 0;
+    const prevTop = panel ? panel.scrollTop : 0;
+
+    activityState.loading = true;
+    renderActivityStatus();
+
+    const offset = append ? activityState.offset : 0;
+    try {
+      const data = await fetchJson(`/api/activity?limit=${ACTIVITY_PAGE}&offset=${offset}`);
+      const items = data.items || [];
+      if (append) {
+        activityState.items = activityState.items.concat(items);
+        activityState.offset += items.length;
+      } else {
+        activityState.items = items;
+        activityState.offset = items.length;
+        if (panel) panel.scrollTop = 0;
+      }
+      activityState.hasMore = Boolean(data.has_more);
+    } finally {
+      activityState.loading = false;
+      renderActivity();
+      renderActivityStatus();
+      if (append && panel) {
+        panel.scrollTop = prevTop + (panel.scrollHeight - prevHeight);
+      }
+    }
+  }
+
   async function loadDashboard() {
-    const [status, pending, incidents, activity, snoozes, approvals] = await Promise.all([
+    const [status, pending, incidents, snoozes, approvals] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/pending"),
       fetchJson("/api/incidents"),
-      fetchJson("/api/activity"),
       fetchJson("/api/snoozes"),
       fetchJson("/api/approvals/history"),
     ]);
-    state = { status, pending, incidents, activity, snoozes, approvals };
+    state = { status, pending, incidents, snoozes, approvals };
+    const panel = $("activity-panel");
+    const atTop = !panel || panel.scrollTop < 40;
+    if (atTop) {
+      await loadActivity(false);
+    }
     render();
     const el = $("last-refresh");
     if (el) el.textContent = "Updated " + new Date().toLocaleTimeString();
@@ -262,25 +307,55 @@
     );
   }
 
+  function activityServiceLabel(a) {
+    if (!a.project) return "";
+    return a.service ? `${a.project}/${a.service}` : a.project;
+  }
+
+  function renderActivityStatus() {
+    const el = $("activity-status");
+    if (!el) return;
+    el.classList.remove("loading", "hidden");
+    if (activityState.loading) {
+      el.textContent = "Loading…";
+      el.classList.add("loading");
+      return;
+    }
+    const q = ($("activity-filter") || {}).value || "";
+    if (!activityState.items.length) {
+      el.textContent = q.trim() ? "No matching activity" : "No activity yet";
+      return;
+    }
+    if (activityState.hasMore) {
+      el.textContent = "Scroll down for older entries";
+      return;
+    }
+    el.textContent = "End of activity log";
+  }
+
   function renderActivity() {
     const el = $("activity");
     const input = $("activity-filter");
     if (!el) return;
     const q = input ? input.value : "";
-    const rows = filterText(state.activity || [], q, ["message", "project", "service", "category"]);
+    const rows = filterText(activityState.items, q, ["message", "project", "service", "category"]);
     if (!rows.length) {
-      el.innerHTML = `<li class="empty">No matching activity</li>`;
+      el.innerHTML = `<div class="empty">No matching activity</div>`;
+      renderActivityStatus();
       return;
     }
     el.innerHTML = rows
-      .map(
-        (a) => `<li class="activity-row ${esc(a.level || "info")}">
-        <span class="meta">${tsHtml(a.ts)}</span>
-        <span><span class="pill">${esc(a.category || "agent")}</span> ${esc(a.message)}</span>
-        <span class="muted">${a.project ? esc(a.project) + (a.service ? "/" + esc(a.service) : "") : ""}</span>
-      </li>`
-      )
+      .map((a) => {
+        const svc = activityServiceLabel(a);
+        return `<div class="activity-line ${esc(a.level || "info")}">
+          <span class="activity-ts">${fmtUtc(a.ts)}</span>
+          <span class="activity-cat">${esc(a.category || "agent")}</span>
+          <span class="activity-msg">${esc(a.message)}</span>
+          ${svc ? `<span class="activity-svc">${esc(svc)}</span>` : ""}
+        </div>`;
+      })
       .join("");
+    renderActivityStatus();
   }
 
   function renderIncidents() {
@@ -429,6 +504,17 @@
     });
   }
 
+  function initActivityScroll() {
+    const panel = $("activity-panel");
+    if (!panel) return;
+    panel.addEventListener("scroll", () => {
+      if (activityState.loading || !activityState.hasMore) return;
+      if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 64) {
+        loadActivity(true);
+      }
+    });
+  }
+
   function initFilters() {
     const af = $("activity-filter");
     const inf = $("incident-filter");
@@ -508,6 +594,7 @@
     initTheme();
     initModal();
     initFilters();
+    initActivityScroll();
     initLogout();
     loadUser();
     loadDashboard().catch(() => {

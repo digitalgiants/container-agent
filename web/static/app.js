@@ -18,7 +18,37 @@
     offset: 0,
     hasMore: true,
     loading: false,
+    error: null,
   };
+  let activityBootstrapped = false;
+
+  function normalizeActivityResponse(data) {
+    if (Array.isArray(data)) {
+      return { items: data, has_more: false };
+    }
+    if (data && typeof data === "object") {
+      return {
+        items: Array.isArray(data.items) ? data.items : [],
+        has_more: Boolean(data.has_more),
+      };
+    }
+    return { items: [], has_more: false };
+  }
+
+  function applyActivityData(data, { append = false, resetScroll = false } = {}) {
+    const panel = $("activity-panel");
+    const normalized = normalizeActivityResponse(data);
+    if (append) {
+      activityState.items = activityState.items.concat(normalized.items);
+      activityState.offset += normalized.items.length;
+    } else {
+      activityState.items = normalized.items;
+      activityState.offset = normalized.items.length;
+      if (resetScroll && panel) panel.scrollTop = 0;
+    }
+    activityState.hasMore = normalized.has_more;
+    activityState.error = null;
+  }
 
   function $(id) {
     return document.getElementById(id);
@@ -107,16 +137,9 @@
     const offset = append ? activityState.offset : 0;
     try {
       const data = await fetchJson(`/api/activity?limit=${ACTIVITY_PAGE}&offset=${offset}`);
-      const items = data.items || [];
-      if (append) {
-        activityState.items = activityState.items.concat(items);
-        activityState.offset += items.length;
-      } else {
-        activityState.items = items;
-        activityState.offset = items.length;
-        if (panel) panel.scrollTop = 0;
-      }
-      activityState.hasMore = Boolean(data.has_more);
+      applyActivityData(data, { append });
+    } catch (err) {
+      activityState.error = err && err.message ? err.message : "Failed to load activity";
     } finally {
       activityState.loading = false;
       renderActivity();
@@ -128,18 +151,29 @@
   }
 
   async function loadDashboard() {
-    const [status, pending, incidents, snoozes, approvals] = await Promise.all([
+    const panel = $("activity-panel");
+    const atTop = !activityBootstrapped || !panel || panel.scrollTop < 40;
+    const requests = [
       fetchJson("/api/status"),
       fetchJson("/api/pending"),
       fetchJson("/api/incidents"),
       fetchJson("/api/snoozes"),
       fetchJson("/api/approvals/history"),
-    ]);
-    state = { status, pending, incidents, snoozes, approvals };
-    const panel = $("activity-panel");
-    const atTop = !panel || panel.scrollTop < 40;
+    ];
     if (atTop) {
-      await loadActivity(false);
+      requests.push(fetchJson(`/api/activity?limit=${ACTIVITY_PAGE}&offset=0`));
+    }
+    const results = await Promise.all(requests);
+    state = {
+      status: results[0],
+      pending: results[1],
+      incidents: results[2],
+      snoozes: results[3],
+      approvals: results[4],
+    };
+    if (atTop) {
+      applyActivityData(results[5], { resetScroll: !activityBootstrapped });
+      activityBootstrapped = true;
     }
     render();
     const el = $("last-refresh");
@@ -321,9 +355,18 @@
       el.classList.add("loading");
       return;
     }
+    if (activityState.error) {
+      el.textContent = activityState.error;
+      return;
+    }
     const q = ($("activity-filter") || {}).value || "";
     if (!activityState.items.length) {
-      el.textContent = q.trim() ? "No matching activity" : "No activity yet";
+      const count = state.status?.activity_count || 0;
+      if (count > 0 && !q.trim()) {
+        el.textContent = `${count} records on disk — reload or rebuild the UI container`;
+      } else {
+        el.textContent = q.trim() ? "No matching activity" : "No activity yet";
+      }
       return;
     }
     if (activityState.hasMore) {
@@ -340,7 +383,12 @@
     const q = input ? input.value : "";
     const rows = filterText(activityState.items, q, ["message", "project", "service", "category"]);
     if (!rows.length) {
-      el.innerHTML = `<div class="empty">No matching activity</div>`;
+      const count = state.status?.activity_count || 0;
+      if (count > 0 && !q.trim()) {
+        el.innerHTML = `<div class="empty">${count} activity records exist but could not be displayed. Hard-refresh the page or run: podman compose -f compose/docker-compose.yml up -d --build --force-recreate</div>`;
+      } else {
+        el.innerHTML = `<div class="empty">No matching activity</div>`;
+      }
       renderActivityStatus();
       return;
     }

@@ -24,7 +24,7 @@ from auth import (
 
 DATA_DIR = Path(os.environ.get("CONTAINER_AGENT_DATA_DIR", "/data"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 STATIC_ASSETS = {
     "app.js": "application/javascript",
     "style.css": "text/css",

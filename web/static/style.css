@@ -308,7 +308,7 @@ ul.feed {
 }
 
 .activity-panel {
-  max-height: 28rem;
+  max-height: 14rem;
   display: flex;
   flex-direction: column;
 }

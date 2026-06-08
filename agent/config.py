@@ -43,6 +43,9 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["compose_search_paths"] = [_expand(p) for p in cfg.get("compose_search_paths", [])]
     cfg.setdefault("data_dir", str(DEFAULT_DATA_DIR))
     cfg["data_dir"] = _expand(cfg["data_dir"])
+    cfg.setdefault("ollama_url", "http://127.0.0.1:11434")
+    cfg.setdefault("ollama_model", "qwen2.5:7b-instruct")
+    cfg.setdefault("ollama_timeout_seconds", 180)
     return cfg
 
 

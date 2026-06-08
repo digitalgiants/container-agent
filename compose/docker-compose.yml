@@ -1,4 +1,19 @@
 services:
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: container-agent-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   container-agent-ui:
     build:
       context: ../web
@@ -23,3 +38,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  ollama-data:

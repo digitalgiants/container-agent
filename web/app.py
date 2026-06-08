@@ -214,12 +214,53 @@ def _file_info(path: Path) -> dict[str, Any]:
     return info
 
 
+def _display_name_lookup(services: list[dict]) -> dict[tuple[str, str], str]:
+    lookup: dict[tuple[str, str], str] = {}
+    for svc in services:
+        project = svc.get("project")
+        service = svc.get("service")
+        if project and service:
+            lookup[(str(project), str(service))] = str(svc.get("display_name") or f"{project}/{service}")
+    return lookup
+
+
+def _top_issues(limit: int = 5, services: list[dict] | None = None) -> list[dict]:
+    incidents = _incidents(limit=300)
+    names = _display_name_lookup(services or [])
+    tallies: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in incidents:
+        project = str(row.get("project", ""))
+        service = str(row.get("service", ""))
+        if not project or not service:
+            continue
+        key = (project, service)
+        entry = tallies.setdefault(
+            key,
+            {
+                "project": project,
+                "service": service,
+                "display_name": names.get(key, f"{project}/{service}"),
+                "count": 0,
+                "latest_issue": row.get("issue", ""),
+                "latest_outcome": row.get("outcome", ""),
+                "latest_ts": row.get("ts", ""),
+            },
+        )
+        entry["count"] += 1
+    ranked = sorted(
+        tallies.values(),
+        key=lambda item: (-int(item["count"]), str(item.get("latest_ts", "")), str(item["project"])),
+    )
+    return ranked[:limit]
+
+
 def _status() -> dict[str, Any]:
     incidents_path = DATA_DIR / "incidents.jsonl"
     activity_path = DATA_DIR / "activity.jsonl"
     heartbeat_path = DATA_DIR / "heartbeat.json"
     pending_dir = DATA_DIR / "pending"
     heartbeat = _heartbeat() or {}
+    services = heartbeat.get("services", [])
     activity_info = _file_info(activity_path)
     agent_data_dir = heartbeat.get("data_dir")
     has_scan_data = bool(heartbeat.get("ts")) and activity_info["lines"] > 0
@@ -235,7 +276,8 @@ def _status() -> dict[str, Any]:
         "pending_count": len(list(pending_dir.glob("*.json"))) if pending_dir.exists() else 0,
         "snooze_count": len(_snoozes()),
         "heartbeat": heartbeat,
-        "services": heartbeat.get("services", []),
+        "services": services,
+        "top_issues": _top_issues(services=services),
     }
 
 

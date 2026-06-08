@@ -42,3 +42,12 @@ log_error_patterns:
 disk_warn_percent_free: 15
 
 web_ui_url: http://127.0.0.1:8787
+
+# Local LLM (Ollama container from compose/docker-compose.yml).
+ollama_url: http://127.0.0.1:11434
+ollama_model: qwen2.5:7b-instruct
+ollama_timeout_seconds: 180
+
+# Optional extra Caddyfiles for service health labels (also scans /etc/caddy and Caddy containers).
+# caddyfile_paths:
+#   - /etc/caddy/Caddyfile

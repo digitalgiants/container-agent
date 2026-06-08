@@ -52,7 +52,17 @@
         <h2>Agent activity</h2>
         <input id="activity-filter" class="filter-input" type="search" placeholder="Filter activity…" aria-label="Filter activity">
       </div>
-      <ul id="activity" class="feed"></ul>
+      <div class="scroll-panel">
+        <ul id="activity" class="feed"></ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Top active issues</h2>
+        <span class="hint">Most frequent in recent incidents</span>
+      </div>
+      <ul id="top-issues" class="feed"></ul>
     </section>
 
     <section>
@@ -60,7 +70,9 @@
         <h2>Recent incidents</h2>
         <input id="incident-filter" class="filter-input" type="search" placeholder="Filter by project, service, outcome…" aria-label="Filter incidents">
       </div>
-      <ul id="incidents" class="feed"></ul>
+      <div class="scroll-panel">
+        <ul id="incidents" class="feed"></ul>
+      </div>
     </section>
 
     <section>

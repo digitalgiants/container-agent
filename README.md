@@ -8,7 +8,7 @@ Designed for **rootless Podman** — the agent runs as **your SSH login user** (
 
 | Item | How to get it |
 |------|----------------|
-| **Gemini API key** | [Google AI Studio](https://aistudio.google.com/apikey) → Create API key |
+| **RAM for Ollama** | 8 GB+ recommended for `qwen2.5:7b-instruct` (runs in a Podman container) |
 | **Gmail App Password** | [Google App Passwords](https://myaccount.google.com/apppasswords) (2FA required on the account) |
 | **Git access** | SSH to the RHEL box from your dev machine |
 | **Compose search root** | Default: `/home/digilabs` (recursive — every git repo underneath) |
@@ -44,10 +44,10 @@ chmod +x install.sh uninstall.sh
 The installer will:
 
 - `dnf install` python3, msmtp, lsof, podman (sudo once)
-- Prompt for compose search root (default `/home/digilabs`), Gemini key, Gmail app password
+- Prompt for compose search root (default `/home/digilabs`), Gmail app password, UI login
 - Write config to `~/.config/container-agent/`
 - Install a **systemd user timer** (every 5 minutes)
-- Start the **approval web UI** container on `127.0.0.1:8787`
+- Start **Ollama** on `127.0.0.1:11434` and the **approval web UI** on `127.0.0.1:8787`
 
 ### 3. Verify
 
@@ -96,7 +96,7 @@ Email is sent **only when** auto-fix did not restore health. Includes:
 - Issue summary
 - `app_version` (when HTTP health returns it)
 - Actions taken (“ran X → result Y”)
-- Gemini root cause + recommended commands
+- Local LLM root cause + recommended commands (when analysis runs)
 
 ## Incident history
 
@@ -112,6 +112,7 @@ Append-only log on the server:
 container-agent status
 container-agent run
 container-agent approve <incident-id>
+container-agent pull-llm
 ./uninstall.sh
 ```
 
@@ -150,12 +151,14 @@ systemd user timer (5 min)
         → health + logs (tail 80)
         → graceful restart (max 5/hour per service)
         → lock-file analysis (lsof, backup, optional delete)
-        → Gemini analysis if still broken
-        → email if unresolved
+        → Ollama LLM analysis if still broken
+        → email if approval required
 
-podman compose → container-agent-ui :8787
-    → shared volume ~/.local/share/container-agent
-    → approve pending fixes
+podman compose
+    → container-agent-ollama :11434 (local LLM)
+    → container-agent-ui :8787
+        → shared volume ~/.local/share/container-agent
+        → approve pending fixes
 ```
 
 ## Why not a separate Linux user?
@@ -169,5 +172,5 @@ Rootless Podman stores containers per user. Your compose stacks run under your S
 | `podman compose` not found | `sudo dnf install podman-compose` or Podman 4+ compose plugin |
 | Timer not firing | `sudo loginctl enable-linger $USER` then `systemctl --user enable --now container-agent.timer` |
 | Email fails | Test: `echo test \| msmtp drewfert@gmail.com` |
-| No Gemini analysis | Check `GEMINI_API_KEY` in `~/.config/container-agent/secrets.env` |
+| No LLM analysis | `container-agent status` (ollama up?); `container-agent pull-llm`; check `ollama_model` in `config.yaml` |
 | UI container cannot see incidents | Ensure compose volume uses same `DATA_DIR` as config (`~/.local/share/container-agent`) |

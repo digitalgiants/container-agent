@@ -209,6 +209,36 @@ ul.feed {
   gap: 0.6rem;
 }
 
+.scroll-panel {
+  max-height: 22rem;
+  overflow-y: auto;
+  padding-right: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.scroll-panel .feed {
+  padding: 0.65rem;
+}
+
+.scroll-panel::-webkit-scrollbar {
+  width: 0.45rem;
+}
+
+.scroll-panel::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+.top-issue-rank {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  min-width: 1.5rem;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);

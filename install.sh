@@ -69,7 +69,7 @@ write_config() {
 }
 
 write_secrets() {
-  local gemini_key smtp_password smtp_user alert_email
+  local smtp_password smtp_user alert_email
   if [[ -f "${CONFIG_DIR}/secrets.env" ]]; then
     log "Keeping existing ${CONFIG_DIR}/secrets.env"
     return
@@ -77,17 +77,14 @@ write_secrets() {
 
   echo
   log "Secrets are stored only on this server (${CONFIG_DIR}/secrets.env), never in git."
-  echo "Get a Gemini API key: https://aistudio.google.com/apikey"
   echo "Get a Gmail App Password: https://myaccount.google.com/apppasswords"
   echo
 
-  prompt_secret gemini_key "Gemini API key"
   prompt_value smtp_user "SMTP user (Gmail address)" "drewfert@gmail.com"
   prompt_secret smtp_password "Gmail App Password (not your login password)"
   prompt_value alert_email "Alert email recipient" "$smtp_user"
 
   cat > "${CONFIG_DIR}/secrets.env" <<EOF
-GEMINI_API_KEY=${gemini_key}
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=${smtp_user}
@@ -177,18 +174,44 @@ EOF
   log "Wrote compose/.env → data=${data_dir} config=${CONFIG_DIR}"
 }
 
-start_web_ui() {
+wait_for_ollama() {
+  local tries=0
+  while (( tries < 30 )); do
+    if curl -fsS "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
+      return 0
+    fi
+    tries=$((tries + 1))
+    sleep 2
+  done
+  die "Ollama did not become ready — run: podman logs container-agent-ollama"
+}
+
+pull_ollama_model() {
+  local model
+  model="$("${VENV_DIR}/bin/python" -c "from agent.config import load_config; print(load_config().get('ollama_model', 'qwen2.5:7b-instruct'))")"
+  if podman exec container-agent-ollama ollama list 2>/dev/null | awk '{print $1}' | grep -Fxq "$model"; then
+    log "Ollama model already present: ${model}"
+    return
+  fi
+  log "Pulling Ollama model ${model} (first install may take several minutes)..."
+  podman exec container-agent-ollama ollama pull "$model"
+}
+
+start_compose_stack() {
   write_compose_env
   if [[ ! -f "${REPO_DIR}/web/static/index.html" ]]; then
     die "Missing ${REPO_DIR}/web/static/index.html — run git pull for the full UI"
   fi
-  log "Building and starting approval UI container..."
+  log "Building and starting Ollama + approval UI containers..."
   podman compose -f "${REPO_DIR}/compose/docker-compose.yml" build --no-cache
   podman compose -f "${REPO_DIR}/compose/docker-compose.yml" up -d --force-recreate
+  wait_for_ollama
+  pull_ollama_model
   sleep 2
   if ! curl -fsS "http://127.0.0.1:8787/health" >/dev/null; then
     die "Web UI failed health check — run: podman logs container-agent-ui"
   fi
+  log "Ollama on http://127.0.0.1:11434"
   log "Web UI on http://127.0.0.1:8787 (reverse-proxy this port)"
 }
 
@@ -207,7 +230,7 @@ main() {
   write_msmtp
   install_cli
   install_systemd_user_units
-  start_web_ui
+  start_compose_stack
 
   echo
   log "Install complete."

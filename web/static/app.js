@@ -157,12 +157,14 @@
     }
     el.innerHTML = services
       .map((s) => {
-        const label = esc(s.project) + "/" + esc(s.service);
+        const label = esc(s.display_name || s.service || s.project);
         const snoozed = s.snoozed ? " snoozed" : "";
         const title = (s.issues || []).join("; ") || s.status;
+        const detail = s.display_name ? `${esc(s.project)}/${esc(s.service)}` : "";
         return `<div class="health-chip${snoozed}" title="${esc(title)}">
           <span class="health-dot ${esc(s.status)}"></span>
           <span>${label}</span>
+          ${detail ? `<span class="pill">${detail}</span>` : ""}
           ${s.snoozed ? '<span class="pill">snoozed</span>' : ""}
         </div>`;
       })
@@ -198,6 +200,35 @@
         await loadDashboard();
       });
     });
+  }
+
+  function displayName(project, service) {
+    const services = state.status?.services || [];
+    const match = services.find((s) => s.project === project && s.service === service);
+    return match?.display_name || `${project}/${service}`;
+  }
+
+  function renderTopIssues() {
+    const el = $("top-issues");
+    if (!el) return;
+    const rows = state.status?.top_issues || [];
+    if (!rows.length) {
+      el.innerHTML = `<li class="empty">No recurring issues in recent incidents.</li>`;
+      return;
+    }
+    el.innerHTML = rows
+      .map(
+        (row, idx) => `<li class="card">
+        <div class="card-head">
+          <span class="top-issue-rank">#${idx + 1}</span>
+          <span class="title">${esc(row.display_name || displayName(row.project, row.service))}</span>
+          <span class="badge badge-${esc(row.latest_outcome || "open")}">${esc(row.count)}×</span>
+        </div>
+        <div class="issue">${esc((row.latest_issue || "").slice(0, 180))}</div>
+        <div class="detail">${esc(row.project)}/${esc(row.service)} · last ${fmtRelative(row.latest_ts)}</div>
+      </li>`
+      )
+      .join("");
   }
 
   function renderPending() {
@@ -272,8 +303,9 @@
       .map(
         (i) => `<li class="card clickable incident-card" data-id="${esc(i.id)}">
         <div class="meta">${tsHtml(i.ts)} · <code>${esc((i.id || "").slice(0, 8))}</code></div>
-        <div class="card-head"><span class="title">${esc(i.project)}/${esc(i.service)}</span>
+        <div class="card-head"><span class="title">${esc(displayName(i.project, i.service))}</span>
           <span class="badge badge-${esc(i.outcome)}">${esc(i.outcome)}</span></div>
+        <div class="detail">${esc(i.project)}/${esc(i.service)}</div>
         <div class="issue">${esc(i.issue)}</div>
         <div class="detail">${esc((i.root_cause || "").slice(0, 200))}</div>
       </li>`
@@ -323,6 +355,7 @@
     renderSnoozes();
     renderPending();
     renderActivity();
+    renderTopIssues();
     renderIncidents();
     renderApprovals();
     renderDiagnostics();

@@ -8,11 +8,12 @@ from agent.activity import ActivityLog
 from agent.config import ensure_data_dirs, load_config, load_secrets
 from agent.discovery import discover_compose_projects, list_compose_services
 from agent.email_sender import send_approval_required_alert
-from agent.gemini_client import analyze_incident
+from agent.ollama_client import analyze_incident
 from agent.health import evaluate_service, host_disk_low, host_oom_recent
 from agent.incidents import IncidentStore
 from agent.logs import extract_lock_hints, scan_log_issues, tail_service_logs
 from agent.remediate import has_open_pending_for_service, remediate
+from agent.service_names import clear_display_name_cache, resolve_display_name
 from agent.snooze import is_snoozed
 from agent.ui_auth import create_approval_token
 
@@ -73,6 +74,10 @@ def run_once() -> int:
     pending = 0
     service_health_rows: list[dict] = []
 
+    clear_display_name_cache()
+    caddyfile_paths = cfg.get("caddyfile_paths", [])
+    compose_paths = cfg["compose_search_paths"]
+
     activity.record(
         f"Scan started: {len(projects)} compose project(s)",
         category="scan",
@@ -92,10 +97,17 @@ def run_once() -> int:
             lock_hints = extract_lock_hints(logs)
             service_issues = list(health.issues) + log_issues
             snoozed = is_snoozed(data_dir, health.project, health.service)
+            display_name = resolve_display_name(
+                project,
+                health.service,
+                search_paths=compose_paths,
+                caddyfile_paths=caddyfile_paths,
+            )
             service_health_rows.append(
                 {
                     "project": health.project,
                     "service": health.service,
+                    "display_name": display_name,
                     "status": _service_status(health, service_issues),
                     "snoozed": snoozed,
                     "issues": service_issues[:5],
@@ -194,7 +206,9 @@ def run_once() -> int:
             root_cause, commands = analyze_incident(
                 result.incident,
                 logs,
-                secrets.get("GEMINI_API_KEY", ""),
+                ollama_url=str(cfg.get("ollama_url", "http://127.0.0.1:11434")),
+                ollama_model=str(cfg.get("ollama_model", "qwen2.5:7b-instruct")),
+                timeout_seconds=int(cfg.get("ollama_timeout_seconds", 180)),
             )
             result.incident.root_cause = root_cause
             result.incident.recommended_commands = commands

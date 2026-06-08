@@ -9,6 +9,7 @@ from pathlib import Path
 from agent.approvals import log_approval
 from agent.config import DEFAULT_CONFIG_DIR, load_config
 from agent.discovery import discover_compose_projects
+from agent.ollama_client import ollama_available
 from agent.ui_auth import ensure_session_secret, load_ui_auth, write_ui_auth
 
 
@@ -50,6 +51,11 @@ def cmd_status() -> int:
     pending_dir = data_dir / "pending"
     print(f"automation_mode: {cfg.get('automation_mode')}")
     print(f"data_dir: {data_dir}")
+    ollama_url = str(cfg.get("ollama_url", "http://127.0.0.1:11434"))
+    ollama_model = str(cfg.get("ollama_model", "qwen2.5:7b-instruct"))
+    ollama_up = ollama_available(ollama_url)
+    print(f"ollama: {ollama_url} ({'up' if ollama_up else 'down'})")
+    print(f"ollama_model: {ollama_model}")
     pending = sorted(pending_dir.glob("*.json")) if pending_dir.exists() else []
     print(f"pending approvals: {len(pending)}")
     for path in pending:
@@ -74,6 +80,24 @@ def cmd_status() -> int:
     else:
         print("ui compose env: missing — run install.sh or: container-agent sync-ui", file=sys.stderr)
     return 0
+
+
+def cmd_pull_llm() -> int:
+    import subprocess
+
+    cfg = load_config()
+    model = str(cfg.get("ollama_model", "qwen2.5:7b-instruct"))
+    url = str(cfg.get("ollama_url", "http://127.0.0.1:11434"))
+    if not ollama_available(url):
+        print("Ollama is not reachable. Start it with:", file=sys.stderr)
+        print("  podman compose -f ~/container-agent/compose/docker-compose.yml up -d ollama", file=sys.stderr)
+        return 1
+    print(f"Pulling model {model}...")
+    result = subprocess.run(
+        ["podman", "exec", "container-agent-ollama", "ollama", "pull", model],
+        check=False,
+    )
+    return result.returncode
 
 
 def cmd_sync_ui() -> int:
@@ -126,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("discover", help="List compose projects found under configured search paths")
     sub.add_parser("sync-ui", help="Write compose/.env so the web UI uses the same data_dir")
     sub.add_parser("set-ui-password", help="Set or change the web UI login password")
+    sub.add_parser("pull-llm", help="Pull the configured Ollama model into the container")
 
     args = parser.parse_args(argv)
     if args.command == "approve":
@@ -142,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sync_ui()
     if args.command == "set-ui-password":
         return cmd_set_ui_password()
+    if args.command == "pull-llm":
+        return cmd_pull_llm()
     return 1
 
 

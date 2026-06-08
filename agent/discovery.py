@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent.podman_json import parse_podman_json_rows
+
 
 COMPOSE_FILENAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 SKIP_DIR_NAMES = frozenset(
@@ -88,14 +90,7 @@ def list_compose_services(project: ComposeProject) -> list[str]:
     if result.returncode != 0:
         return []
     services: list[str] = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in parse_podman_json_rows(result.stdout):
         name = row.get("Service") or row.get("Names") or row.get("Name")
         if name:
             services.append(str(name).split(",")[0])

@@ -5,6 +5,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from agent.podman_json import parse_podman_json_rows
+
 DOMAIN_BLOCK_RE = re.compile(
     r"^([a-zA-Z0-9*._-]+(?:\.[a-zA-Z0-9*._-]+)+(?:\s*,\s*[a-zA-Z0-9*._-]+(?:\.[a-zA-Z0-9*._-]+)+)*)\s*\{",
     re.MULTILINE,
@@ -78,14 +80,7 @@ def _caddy_container_caddyfiles() -> list[Path]:
     if result.returncode != 0:
         return []
     paths: list[Path] = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in parse_podman_json_rows(result.stdout):
         image = str(row.get("Image", "")).lower()
         names = " ".join(row.get("Names") or []).lower()
         if "caddy" not in image and "caddy" not in names:

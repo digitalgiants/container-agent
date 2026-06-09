@@ -169,7 +169,8 @@ Rootless Podman stores containers per user. Your compose stacks run under your S
 
 | Problem | Fix |
 |---------|-----|
-| `podman compose` not found | `sudo dnf install podman-compose` or Podman 4+ compose plugin |
+| `podman compose` / compose provider errors | `sudo dnf install podman-compose` then verify: `podman compose version` |
+| UI shows container down but `podman ps` shows it running | Compose provider missing — agent cannot run `podman compose ps`; install `podman-compose` and re-run `container-agent run` |
 | Timer not firing | `sudo loginctl enable-linger $USER` then `systemctl --user enable --now container-agent.timer` |
 | Email fails | Test: `echo test \| msmtp drewfert@gmail.com` |
 | No LLM analysis | `container-agent status` (ollama up?); `container-agent pull-llm`; check `ollama_model` in `config.yaml` |

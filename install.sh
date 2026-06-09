@@ -39,7 +39,7 @@ require_cmd() {
 install_packages() {
   if command -v dnf >/dev/null 2>&1; then
     log "Installing system packages (sudo may prompt)..."
-    sudo dnf install -y python3 python3-pip msmtp lsof podman || true
+    sudo dnf install -y python3 python3-pip msmtp lsof podman podman-compose || true
   else
     log "dnf not found; ensure python3, msmtp, lsof, and podman are installed."
   fi

@@ -7,7 +7,12 @@ from pathlib import Path
 
 from agent.activity import ActivityLog
 from agent.config import ensure_data_dirs, load_config, load_secrets
-from agent.discovery import ComposeProject, discover_compose_projects, list_compose_services
+from agent.discovery import (
+    ComposeProject,
+    compose_provider_available,
+    discover_compose_projects,
+    list_compose_services,
+)
 from agent.email_sender import send_approval_required_alert
 from agent.ollama_client import analyze_incident
 from agent.health import evaluate_service, host_disk_low, host_oom_recent
@@ -114,6 +119,12 @@ def run_once() -> int:
     oom_issue = host_oom_recent()
     if oom_issue:
         host_issues.append(oom_issue)
+    if not compose_provider_available():
+        host_issues.append(
+            "podman compose provider missing — install podman-compose "
+            "(sudo dnf install podman-compose). Monitoring uses podman label fallbacks; "
+            "start/stop/restart actions still require compose."
+        )
 
     projects = discover_compose_projects(cfg["compose_search_paths"])
 
@@ -170,7 +181,13 @@ def run_once() -> int:
     for project in projects:
         services = list_compose_services(project)
         if not services:
-            services = [project.name]
+            activity.record(
+                f"No services found for compose project {project.name}",
+                level="warn",
+                category="scan",
+                project=project.name,
+            )
+            continue
 
         for service in services:
             health = evaluate_service(project, service)

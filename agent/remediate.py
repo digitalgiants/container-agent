@@ -79,11 +79,23 @@ def graceful_restart(project: ComposeProject, service: str) -> ActionRecord:
     )
 
 
-def force_restart(project: ComposeProject, service: str) -> ActionRecord:
-    stop = _run(
+def compose_start(project: ComposeProject, service: str) -> ActionRecord:
+    """Bring up a stopped or missing service via compose up -d."""
+    return _run(
+        ["podman", "compose", "-f", str(project.compose_file), "up", "-d", service],
+        cwd=project.directory,
+    )
+
+
+def compose_stop(project: ComposeProject, service: str) -> ActionRecord:
+    return _run(
         ["podman", "compose", "-f", str(project.compose_file), "stop", service],
         cwd=project.directory,
     )
+
+
+def force_restart(project: ComposeProject, service: str) -> ActionRecord:
+    stop = compose_stop(project, service)
     start = _run(
         ["podman", "compose", "-f", str(project.compose_file), "start", service],
         cwd=project.directory,
@@ -267,7 +279,10 @@ def remediate(
     graceful_retries = int(cfg.get("graceful_retries_before_force", 2))
 
     if can_restart(data_dir, restart_key, max_restarts):
-        action = graceful_restart(project, health.service)
+        if health.status == "missing":
+            action = compose_start(project, health.service)
+        else:
+            action = graceful_restart(project, health.service)
         incident.actions.append(action)
         record_restart(data_dir, restart_key)
     else:
@@ -325,12 +340,18 @@ def remediate(
 
     for _ in range(graceful_retries):
         if can_restart(data_dir, restart_key, max_restarts):
-            action = graceful_restart(project, health.service)
+            if health.status == "missing":
+                action = compose_start(project, health.service)
+            else:
+                action = graceful_restart(project, health.service)
             incident.actions.append(action)
             record_restart(data_dir, restart_key)
 
     if can_restart(data_dir, restart_key, max_restarts):
-        incident.actions.append(force_restart(project, health.service))
+        if health.status == "missing":
+            incident.actions.append(compose_start(project, health.service))
+        else:
+            incident.actions.append(force_restart(project, health.service))
         record_restart(data_dir, restart_key)
 
     incident.outcome = "auto_fix_attempted"

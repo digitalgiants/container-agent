@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -527,6 +528,181 @@ def api_clear_snooze(project: str, service: str, _user: str = Depends(require_us
 @app.post("/api/approve/{incident_id}")
 def approve_api(incident_id: str, user: str = Depends(require_user)) -> dict:
     return _do_approve(incident_id, approved_by=user)
+
+
+# ---------------------------------------------------------------------------
+# Container action queue — commands are written to disk and executed by the
+# host agent on its next scan (or immediately if the systemd path unit is
+# configured to watch DATA_DIR/scan_requested).
+# ---------------------------------------------------------------------------
+
+def _queue_action(action_type: str, project: str, service: str, requested_by: str) -> dict[str, Any]:
+    action_id = str(uuid.uuid4())
+    actions_dir = DATA_DIR / "actions"
+    actions_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {
+        "id": action_id,
+        "type": action_type,
+        "project": project,
+        "service": service,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+        "requested_by": requested_by,
+        "status": "pending",
+    }
+    (actions_dir / f"{action_id}.json").write_text(json.dumps(payload, indent=2))
+    # Also touch the scan_requested trigger so the host watcher fires immediately.
+    (DATA_DIR / "scan_requested").write_text(payload["requested_at"])
+    return {
+        "status": "queued",
+        "action_id": action_id,
+        "type": action_type,
+        "project": project,
+        "service": service,
+        "message": "Action queued; the host agent will execute it on its next scan run.",
+    }
+
+
+@app.post("/api/scan")
+def api_scan_request(user: str = Depends(require_user)) -> dict[str, Any]:
+    """Signal the host agent to run an immediate scan cycle."""
+    ts = datetime.now(timezone.utc).isoformat()
+    (DATA_DIR / "scan_requested").write_text(ts)
+    heartbeat = _heartbeat() or {}
+    last_scan = heartbeat.get("ts")
+    return {
+        "status": "queued",
+        "requested_at": ts,
+        "last_scan": last_scan,
+        "message": (
+            "Scan trigger written. The agent will pick it up on its next scheduled run "
+            "(≤5 min), or immediately if the systemd path unit is active."
+        ),
+    }
+
+
+@app.get("/api/logs/{project}/{service}")
+def api_logs(
+    project: str,
+    service: str,
+    lines: int = Query(100, ge=10, le=500),
+    _user: str = Depends(require_user),
+) -> dict[str, Any]:
+    """Return the most recent cached log tail for a service (written during each scan)."""
+    log_path = DATA_DIR / "logs" / project / f"{service}.log"
+    if not log_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No cached logs yet for this service. Logs are written during each scan cycle.",
+        )
+    all_lines = log_path.read_text().splitlines()
+    return {
+        "project": project,
+        "service": service,
+        "lines": all_lines[-lines:],
+        "total_cached_lines": len(all_lines),
+        "cached_at": datetime.fromtimestamp(log_path.stat().st_mtime, tz=timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/actions")
+def api_list_actions(_user: str = Depends(require_user)) -> dict[str, Any]:
+    """List pending and recently completed web-triggered actions."""
+    actions_dir = DATA_DIR / "actions"
+    done_dir = actions_dir / "done"
+    pending: list[dict] = []
+    done: list[dict] = []
+    if actions_dir.exists():
+        for f in sorted(actions_dir.glob("*.json")):
+            try:
+                pending.append(json.loads(f.read_text()))
+            except json.JSONDecodeError:
+                continue
+    if done_dir.exists():
+        rows = []
+        for f in sorted(done_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                rows.append(json.loads(f.read_text()))
+            except json.JSONDecodeError:
+                continue
+        done = rows[:50]
+    return {"pending": pending, "done": done}
+
+
+@app.post("/api/start/{project}/{service}")
+def api_start(project: str, service: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    """Queue a `podman compose up -d` for a stopped or missing service."""
+    return _queue_action("start", project, service, user)
+
+
+@app.post("/api/restart/{project}/{service}")
+def api_restart(project: str, service: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    """Queue a graceful `podman compose restart` for a running service."""
+    return _queue_action("restart", project, service, user)
+
+
+@app.post("/api/stop/{project}/{service}")
+def api_stop(project: str, service: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    """Queue a `podman compose stop` for a service."""
+    return _queue_action("stop", project, service, user)
+
+
+@app.delete("/api/restart-counts/{project}/{service}")
+def api_clear_restart_counts(
+    project: str, service: str, _user: str = Depends(require_user)
+) -> dict[str, Any]:
+    """Clear the hourly restart rate-limit counter so the agent can restart again immediately."""
+    path = DATA_DIR / "state" / "restart_counts.json"
+    key = f"{project}/{service}"
+    if not path.exists():
+        return {"status": "ok", "message": f"No restart counts on record for {key}"}
+    try:
+        counts: dict = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        counts = {}
+    if key not in counts:
+        return {"status": "ok", "message": f"No restart-count entry for {key}"}
+    del counts[key]
+    path.write_text(json.dumps(counts))
+    return {"status": "cleared", "project": project, "service": service}
+
+
+@app.delete("/api/pending/{incident_id}")
+def api_cancel_pending(incident_id: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    """Cancel a pending approval action without applying it."""
+    pending = DATA_DIR / "pending" / f"{incident_id}.json"
+    if not pending.exists():
+        raise HTTPException(status_code=404, detail="Pending action not found")
+    try:
+        payload = json.loads(pending.read_text())
+    except json.JSONDecodeError:
+        payload = {}
+    pending.unlink()
+    stamp = datetime.now(timezone.utc).isoformat()
+    entry = {
+        "incident_id": incident_id,
+        "project": payload.get("project"),
+        "service": payload.get("service"),
+        "action": payload.get("action"),
+        "cancelled_at": stamp,
+        "cancelled_by": user,
+        "outcome": "cancelled",
+    }
+    approvals_dir = DATA_DIR / "approvals"
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    with (approvals_dir / "history.jsonl").open("a") as fh:
+        fh.write(json.dumps(entry) + "\n")
+    return {"status": "cancelled", "incident_id": incident_id}
+
+
+@app.post("/api/dismiss/{incident_id}")
+def api_dismiss(incident_id: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    """Mark an unresolved incident as acknowledged so it stops surfacing on the dashboard."""
+    dismissed_dir = DATA_DIR / "dismissed"
+    dismissed_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).isoformat()
+    record = {"incident_id": incident_id, "dismissed_at": stamp, "dismissed_by": user}
+    (dismissed_dir / f"{incident_id}.dismissed").write_text(json.dumps(record))
+    return {"status": "dismissed", "incident_id": incident_id, "dismissed_at": stamp}
 
 
 @app.get("/approve/{incident_id}", response_class=HTMLResponse)

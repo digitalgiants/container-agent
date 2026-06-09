@@ -174,3 +174,60 @@ Rootless Podman stores containers per user. Your compose stacks run under your S
 | Email fails | Test: `echo test \| msmtp drewfert@gmail.com` |
 | No LLM analysis | `container-agent status` (ollama up?); `container-agent pull-llm`; check `ollama_model` in `config.yaml` |
 | UI container cannot see incidents | Ensure compose volume uses same `DATA_DIR` as config (`~/.local/share/container-agent`) |
+
+## Instant scan trigger (optional systemd path unit)
+
+`POST /api/scan` writes `$DATA_DIR/scan_requested`. To make this fire the agent **immediately** instead of waiting up to 5 minutes, add a systemd path unit alongside the existing timer:
+
+```ini
+# ~/.config/systemd/user/container-agent-scan-trigger.path
+[Unit]
+Description=Fire container-agent scan when web UI requests it
+
+[Path]
+PathExists=%h/.local/share/container-agent/scan_requested
+Unit=container-agent.service
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now container-agent-scan-trigger.path
+```
+
+---
+
+## Optional future enhancements (Tier 3)
+
+The items below are **not implemented**. They require mounting the Podman socket into the UI container or a separate privileged helper process, which adds complexity and a larger attack surface. They are recorded here for future consideration.
+
+### Mount the Podman socket into the UI container
+
+Add to `compose/docker-compose.yml` under `container-agent-ui`:
+
+```yaml
+volumes:
+  - /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro,z
+```
+
+Replace `1000` with your actual UID (`id -u`). With the socket mounted, the web process can call `podman` directly, enabling the endpoints below.
+
+### `POST /api/force-restart/{project}/{service}`
+
+Runs `podman compose stop` then `podman compose start` — harder on the service than a graceful restart. Recommended safeguard: require a confirmation token in the request body so double-clicks can't trigger it.
+
+```json
+POST /api/force-restart/myproject/webapp
+{ "confirm": "force-restart" }
+```
+
+### `GET /api/inspect/{project}/{service}`
+
+Returns the full `podman inspect` JSON for the running container. Read-only but exposes mount paths, environment variables, and network config — keep strictly behind the login wall and consider redacting `Env` fields that may contain secrets.
+
+### Considerations before enabling Tier 3
+
+- The Podman socket grants equivalent root-level access to all rootless containers owned by the user. Even a read-only mount (`ro`) allows listing and inspecting all containers.
+- All Tier 3 endpoints should be rate-limited and audit-logged.
+- Consider adding a separate `admin` role (vs read-only `viewer`) before exposing force-restart or inspect.

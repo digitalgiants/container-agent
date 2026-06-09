@@ -2,22 +2,87 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from agent.activity import ActivityLog
 from agent.config import ensure_data_dirs, load_config, load_secrets
-from agent.discovery import discover_compose_projects, list_compose_services
+from agent.discovery import ComposeProject, discover_compose_projects, list_compose_services
 from agent.email_sender import send_approval_required_alert
 from agent.ollama_client import analyze_incident
 from agent.health import evaluate_service, host_disk_low, host_oom_recent
 from agent.incidents import IncidentStore
 from agent.logs import extract_lock_hints, scan_log_issues, tail_service_logs
-from agent.remediate import has_open_pending_for_service, remediate
+from agent.remediate import (
+    compose_start,
+    compose_stop,
+    graceful_restart,
+    has_open_pending_for_service,
+    remediate,
+)
 from agent.service_names import clear_display_name_cache, resolve_display_name
 from agent.snooze import is_snoozed
 from agent.ui_auth import create_approval_token
 
-from agent.discovery import ComposeProject
+
+def _process_web_actions(
+    data_dir: Path,
+    projects: list[ComposeProject],
+    activity: ActivityLog,
+) -> None:
+    """Execute queued actions written by the web UI and record results."""
+    actions_dir = data_dir / "actions"
+    if not actions_dir.exists():
+        return
+    done_dir = actions_dir / "done"
+    done_dir.mkdir(parents=True, exist_ok=True)
+
+    project_map: dict[str, ComposeProject] = {p.name: p for p in projects}
+
+    for action_file in sorted(actions_dir.glob("*.json")):
+        try:
+            payload = json.loads(action_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            action_file.unlink(missing_ok=True)
+            continue
+
+        action_type = payload.get("type", "")
+        project_name = str(payload.get("project", ""))
+        service = str(payload.get("service", ""))
+        project = project_map.get(project_name)
+
+        if not project:
+            result_msg = f"Project '{project_name}' not found in discovered stacks"
+        elif action_type == "start":
+            result_msg = compose_start(project, service).result
+        elif action_type == "restart":
+            result_msg = graceful_restart(project, service).result
+        elif action_type == "stop":
+            result_msg = compose_stop(project, service).result
+        else:
+            result_msg = f"Unknown action type: {action_type!r}"
+
+        payload["status"] = "done"
+        payload["result"] = result_msg
+        payload["processed_at"] = datetime.now(timezone.utc).isoformat()
+
+        (done_dir / action_file.name).write_text(json.dumps(payload, indent=2))
+        action_file.unlink(missing_ok=True)
+
+        activity.record(
+            f"Web action '{action_type}' {project_name}/{service}: {result_msg[:120]}",
+            category="web_action",
+            project=project_name,
+            service=service,
+        )
+        print(f"Web action: {action_type} {project_name}/{service}")
+
+
+def _cache_service_logs(data_dir: Path, project: str, service: str, log_text: str) -> None:
+    """Write the latest log tail to disk so the web UI can serve it."""
+    log_dir = data_dir / "logs" / project
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / f"{service}.log").write_text(log_text)
 
 
 def _service_status(health, service_issues: list[str]) -> str:
@@ -51,6 +116,20 @@ def run_once() -> int:
         host_issues.append(oom_issue)
 
     projects = discover_compose_projects(cfg["compose_search_paths"])
+
+    # Check for a web-UI-triggered scan request and acknowledge it.
+    scan_trigger = data_dir / "scan_requested"
+    if scan_trigger.exists():
+        try:
+            requested_at = scan_trigger.read_text().strip()
+            scan_trigger.unlink(missing_ok=True)
+            activity.record(
+                f"Scan triggered via web UI (requested {requested_at})",
+                category="scan",
+            )
+        except OSError:
+            pass
+
     if not projects:
         msg = "No compose projects found"
         activity.record(msg, level="warn", category="scan")
@@ -78,6 +157,9 @@ def run_once() -> int:
     caddyfile_paths = cfg.get("caddyfile_paths", [])
     compose_paths = cfg["compose_search_paths"]
 
+    # Process any container actions queued through the web UI before the main scan.
+    _process_web_actions(data_dir, projects, activity)
+
     activity.record(
         f"Scan started: {len(projects)} compose project(s)",
         category="scan",
@@ -93,6 +175,7 @@ def run_once() -> int:
         for service in services:
             health = evaluate_service(project, service)
             logs = tail_service_logs(project, service, tail_lines)
+            _cache_service_logs(data_dir, health.project, service, logs)
             log_issues = scan_log_issues(logs, log_patterns)
             lock_hints = extract_lock_hints(logs)
             service_issues = list(health.issues) + log_issues

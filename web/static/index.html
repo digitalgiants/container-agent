@@ -13,6 +13,7 @@
     <header class="hero">
       <div class="toolbar">
         <span id="user-label" class="user-label"></span>
+        <button id="scan-now-btn" class="btn-secondary btn-sm scan-now-btn" type="button" title="Trigger an immediate scan">Scan now</button>
         <button id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">◐</button>
         <button id="logout-btn" class="btn-secondary btn-sm toolbar-logout" type="button">Logout</button>
         <span id="refresh-indicator" class="refresh-indicator">Live</span>
@@ -100,6 +101,16 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3"></script>
+  <div id="svc-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="svc-modal-title">
+    <div class="modal-backdrop" data-close-svc></div>
+    <div class="modal-panel card">
+      <button class="modal-close icon-btn" data-close-svc aria-label="Close">✕</button>
+      <div id="svc-modal-content"></div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

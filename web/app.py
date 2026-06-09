@@ -145,8 +145,19 @@ def _pending() -> list[dict]:
     return rows
 
 
+def _dismissed_ids() -> set[str]:
+    dismissed_dir = DATA_DIR / "dismissed"
+    if not dismissed_dir.exists():
+        return set()
+    return {p.stem for p in dismissed_dir.glob("*.dismissed")}
+
+
 def _incidents(limit: int = 100) -> list[dict]:
-    return _read_jsonl(DATA_DIR / "incidents.jsonl", limit=limit)
+    rows = _read_jsonl(DATA_DIR / "incidents.jsonl", limit=limit)
+    dismissed = _dismissed_ids()
+    if not dismissed:
+        return rows
+    return [r for r in rows if r.get("id") not in dismissed]
 
 
 def _find_incident(incident_id: str) -> dict | None:

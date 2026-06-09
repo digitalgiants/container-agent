@@ -240,7 +240,8 @@
         const snoozed = s.snoozed ? " snoozed" : "";
         const title = (s.issues || []).join("; ") || s.status;
         const detail = s.display_name ? `${esc(s.project)}/${esc(s.service)}` : "";
-        return `<div class="health-chip${snoozed}" title="${esc(title)}">
+        return `<div class="health-chip${snoozed}" title="${esc(title)}"
+            data-project="${esc(s.project)}" data-service="${esc(s.service)}">
           <span class="health-dot ${esc(s.status)}"></span>
           <span>${label}</span>
           ${detail ? `<span class="pill">${detail}</span>` : ""}
@@ -248,6 +249,11 @@
         </div>`;
       })
       .join("");
+    el.querySelectorAll(".health-chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        openServiceModal(chip.dataset.project, chip.dataset.service);
+      });
+    });
   }
 
   function renderSnoozes() {
@@ -327,10 +333,16 @@
         <div class="issue">${esc(p.issue)}</div>
         <div class="detail">Action · ${esc(p.action)}</div>
         <div class="detail">Paths · ${esc((p.paths || []).join(", "))}</div>
-        <a class="btn" href="/approve/${esc(p.incident_id)}">Approve fix</a>
+        <div class="btn-row">
+          <a class="btn" href="/approve/${esc(p.incident_id)}">Approve fix</a>
+          <button class="btn-secondary btn-sm cancel-pending-btn" data-id="${esc(p.incident_id)}">Cancel</button>
+        </div>
       </li>`
       )
       .join("");
+    el.querySelectorAll(".cancel-pending-btn").forEach((btn) => {
+      btn.addEventListener("click", () => cancelPending(btn.dataset.id));
+    });
   }
 
   function filterText(items, query, fields) {
@@ -484,6 +496,181 @@
     renderDiagnostics();
   }
 
+  // -------------------------------------------------------------------------
+  // Toast notifications
+  // -------------------------------------------------------------------------
+  function showToast(msg, type = "info") {
+    const container = $("toast-container");
+    if (!container) return;
+    const el = document.createElement("div");
+    el.className = `toast toast-${type}`;
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+
+  // -------------------------------------------------------------------------
+  // Scan now
+  // -------------------------------------------------------------------------
+  async function scanNow() {
+    const btn = $("scan-now-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "Requesting…"; }
+    try {
+      await fetchJson("/api/scan", { method: "POST" });
+      showToast("Scan requested — agent runs within 5 minutes", "success");
+    } catch (e) {
+      showToast("Failed to request scan", "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Scan now"; }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Container actions (queued via action queue)
+  // -------------------------------------------------------------------------
+  async function serviceAction(type, project, service) {
+    try {
+      await fetchJson(`/api/${encodeURIComponent(type)}/${encodeURIComponent(project)}/${encodeURIComponent(service)}`, {
+        method: "POST",
+      });
+      showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} queued for ${project}/${service} — runs on next scan`, "success");
+    } catch (e) {
+      showToast(`Failed to queue ${type}`, "error");
+    }
+  }
+
+  async function clearRestartCounts(project, service) {
+    try {
+      await fetchJson(`/api/restart-counts/${encodeURIComponent(project)}/${encodeURIComponent(service)}`, {
+        method: "DELETE",
+      });
+      showToast(`Restart rate limit cleared for ${project}/${service}`, "success");
+    } catch (e) {
+      showToast("Failed to clear rate limit", "error");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Service action modal
+  // -------------------------------------------------------------------------
+  async function openServiceModal(project, service) {
+    const modal = $("svc-modal");
+    const content = $("svc-modal-content");
+    if (!modal || !content) return;
+
+    const svcInfo = (state.status?.services || []).find(
+      (s) => s.project === project && s.service === service
+    ) || { project, service, status: "unknown", container_status: "unknown", issues: [] };
+
+    const statusColor = svcInfo.status === "healthy" ? "success"
+      : svcInfo.status === "critical" ? "danger" : "warning";
+    const isMissing = svcInfo.container_status === "missing" || !svcInfo.container_status || svcInfo.container_status === "unknown";
+    const isRunning = svcInfo.container_status === "running";
+
+    const issuesHtml = (svcInfo.issues || []).length
+      ? `<ul class="svc-issues">${(svcInfo.issues).map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`
+      : "";
+
+    content.innerHTML = `
+      <div class="svc-modal-header">
+        <h2 id="svc-modal-title">${esc(project)}/${esc(service)}</h2>
+        <div class="svc-status-row">
+          <span class="health-dot ${esc(svcInfo.status)}" style="width:0.7rem;height:0.7rem"></span>
+          <span style="font-size:0.84rem;color:var(--${statusColor})">${esc(svcInfo.container_status || svcInfo.status)}</span>
+          ${svcInfo.app_version ? `<span class="pill">${esc(svcInfo.app_version)}</span>` : ""}
+        </div>
+        ${issuesHtml}
+      </div>
+      <div class="svc-actions">
+        ${isMissing ? `<button class="btn-success svc-action-btn" data-action="start">Start</button>` : ""}
+        ${isRunning ? `<button class="btn-secondary svc-action-btn" data-action="restart">Restart</button>` : ""}
+        ${!isMissing ? `<button class="btn-danger svc-action-btn" data-action="stop">Stop</button>` : ""}
+        <button class="btn-secondary btn-sm svc-action-btn" data-action="clear-rate-limit" title="Reset hourly restart counter">Clear rate limit</button>
+      </div>
+      <div class="log-section">
+        <h3>Recent logs</h3>
+        <div id="svc-log-box" class="log-box">Loading…</div>
+      </div>`;
+
+    modal.classList.remove("hidden");
+
+    // Wire action buttons
+    content.querySelectorAll(".svc-action-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        const action = btn.dataset.action;
+        if (action === "clear-rate-limit") {
+          await clearRestartCounts(project, service);
+        } else {
+          await serviceAction(action, project, service);
+        }
+        btn.disabled = false;
+        closeServiceModal();
+      });
+    });
+
+    // Load logs async
+    const logBox = $("svc-log-box");
+    try {
+      const data = await fetchJson(
+        `/api/logs/${encodeURIComponent(project)}/${encodeURIComponent(service)}?lines=100`
+      );
+      if (logBox) {
+        const lines = (data.lines || []);
+        logBox.textContent = lines.length
+          ? lines.join("\n")
+          : "(no log output cached yet — runs after next scan)";
+        const cached = data.cached_at ? `  ·  cached ${fmtRelative(data.cached_at)}` : "";
+        const note = document.createElement("div");
+        note.className = "muted";
+        note.style.cssText = "font-size:0.72rem;margin-top:0.35rem;font-family:inherit";
+        note.textContent = `${data.total_cached_lines ?? lines.length} lines${cached}`;
+        logBox.insertAdjacentElement("afterend", note);
+      }
+    } catch (_) {
+      if (logBox) logBox.textContent = "(no cached logs yet — logs are written during each scan)";
+    }
+  }
+
+  function closeServiceModal() {
+    const modal = $("svc-modal");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function initServiceModal() {
+    document.querySelectorAll("[data-close-svc]").forEach((el) => {
+      el.addEventListener("click", closeServiceModal);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeServiceModal();
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Cancel pending / dismiss incident
+  // -------------------------------------------------------------------------
+  async function cancelPending(incidentId) {
+    if (!confirm("Cancel this pending action? The fix will not be applied.")) return;
+    try {
+      await fetchJson(`/api/pending/${encodeURIComponent(incidentId)}`, { method: "DELETE" });
+      showToast("Pending action cancelled", "success");
+      await loadDashboard();
+    } catch (e) {
+      showToast("Failed to cancel pending action", "error");
+    }
+  }
+
+  async function dismissIncident(incidentId) {
+    try {
+      await fetchJson(`/api/dismiss/${encodeURIComponent(incidentId)}`, { method: "POST" });
+      showToast("Incident dismissed", "success");
+      closeModal();
+      await loadDashboard();
+    } catch (e) {
+      showToast("Failed to dismiss incident", "error");
+    }
+  }
+
   async function snoozeService(project, service, hours) {
     await fetch("/api/snooze", {
       method: "POST",
@@ -513,6 +700,7 @@
       <ul class="detail-list">${cmds || "<li class='muted'>—</li>"}</ul>
       <div class="btn-row">
         <button class="btn-secondary snooze-btn" data-project="${esc(inc.project)}" data-service="${esc(inc.service)}">Snooze 4h</button>
+        <button class="btn-secondary dismiss-btn" data-id="${esc(inc.id)}">Dismiss</button>
         <a class="btn" href="/incident/${esc(inc.id)}">Open full page</a>
       </div>`;
   }
@@ -526,12 +714,16 @@
     try {
       const inc = await fetchJson("/api/incidents/" + encodeURIComponent(id));
       content.innerHTML = incidentDetailHtml(inc);
-      const btn = content.querySelector(".snooze-btn");
-      if (btn) {
-        btn.addEventListener("click", async () => {
-          await snoozeService(btn.dataset.project, btn.dataset.service, 4);
+      const snoozeBtn = content.querySelector(".snooze-btn");
+      if (snoozeBtn) {
+        snoozeBtn.addEventListener("click", async () => {
+          await snoozeService(snoozeBtn.dataset.project, snoozeBtn.dataset.service, 4);
           closeModal();
         });
+      }
+      const dismissBtn = content.querySelector(".dismiss-btn");
+      if (dismissBtn) {
+        dismissBtn.addEventListener("click", () => dismissIncident(dismissBtn.dataset.id));
       }
     } catch (e) {
       content.innerHTML = `<p class="detail">Failed to load incident.</p>`;
@@ -641,9 +833,12 @@
   function initDashboard() {
     initTheme();
     initModal();
+    initServiceModal();
     initFilters();
     initActivityScroll();
     initLogout();
+    const scanBtn = $("scan-now-btn");
+    if (scanBtn) scanBtn.addEventListener("click", scanNow);
     loadUser();
     loadDashboard().catch(() => {
       const ind = $("refresh-indicator");

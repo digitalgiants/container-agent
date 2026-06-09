@@ -239,12 +239,10 @@
         const label = esc(s.display_name || s.service || s.project);
         const snoozed = s.snoozed ? " snoozed" : "";
         const title = (s.issues || []).join("; ") || s.status;
-        const detail = s.display_name ? `${esc(s.project)}/${esc(s.service)}` : "";
         return `<div class="health-chip${snoozed}" title="${esc(title)}"
             data-project="${esc(s.project)}" data-service="${esc(s.service)}">
           <span class="health-dot ${esc(s.status)}"></span>
           <span>${label}</span>
-          ${detail ? `<span class="pill">${detail}</span>` : ""}
           ${s.snoozed ? '<span class="pill">snoozed</span>' : ""}
         </div>`;
       })

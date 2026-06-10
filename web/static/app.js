@@ -226,30 +226,79 @@
     if (hint && hb.ts) hint.textContent = fmtRelative(hb.ts) ? "Last scan " + fmtRelative(hb.ts) : "Last scan";
   }
 
+  const STATUS_RANK = { critical: 0, warning: 1, healthy: 2 };
+
+  function groupComposeProjects(services) {
+    const byProject = new Map();
+    for (const row of services) {
+      if (!byProject.has(row.project)) byProject.set(row.project, []);
+      byProject.get(row.project).push(row);
+    }
+    const groups = [];
+    for (const [project, rows] of [...byProject.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const ordered = rows.slice().sort((a, b) => a.service.localeCompare(b.service));
+      const status = ordered.reduce(
+        (worst, row) =>
+          (STATUS_RANK[row.status] ?? 1) < (STATUS_RANK[worst] ?? 1) ? row.status : worst,
+        "healthy"
+      );
+      const displayName =
+        ordered.find((row) => (row.display_name || "").includes("."))?.display_name ||
+        ordered.find((row) => row.display_name)?.display_name ||
+        project;
+      groups.push({
+        project,
+        display_name: displayName,
+        status,
+        snoozed: ordered.every((row) => row.snoozed),
+        services: ordered,
+      });
+    }
+    return groups;
+  }
+
+  function composeProjects() {
+    const fromHeartbeat = state.status?.heartbeat?.compose_projects;
+    if (Array.isArray(fromHeartbeat) && fromHeartbeat.length) return fromHeartbeat;
+    return groupComposeProjects(state.status?.services || []);
+  }
+
+  function serviceIssueTitle(row) {
+    return (row.issues || []).join("; ") || row.status;
+  }
+
   function renderHealth() {
     const el = $("health-strip");
     if (!el) return;
-    const services = state.status?.services || [];
-    if (!services.length) {
+    const groups = composeProjects();
+    if (!groups.length) {
       el.innerHTML = `<span class="empty" style="padding:0.6rem 1rem;border:none;background:transparent">No service data yet — run a scan.</span>`;
       return;
     }
-    el.innerHTML = services
-      .map((s) => {
-        const label = esc(s.display_name || s.service || s.project);
-        const snoozed = s.snoozed ? " snoozed" : "";
-        const title = (s.issues || []).join("; ") || s.status;
-        return `<div class="health-chip${snoozed}" title="${esc(title)}"
-            data-project="${esc(s.project)}" data-service="${esc(s.service)}">
-          <span class="health-dot ${esc(s.status)}"></span>
-          <span>${label}</span>
-          ${s.snoozed ? '<span class="pill">snoozed</span>' : ""}
+    el.innerHTML = groups
+      .map((group) => {
+        const snoozed = group.snoozed ? " snoozed" : "";
+        const title = group.services
+          .map((row) => `${row.service}: ${serviceIssueTitle(row)}`)
+          .join("\n");
+        const dots = group.services
+          .map(
+            (row) =>
+              `<span class="health-svc-dot ${esc(row.status)}" title="${esc(row.service)}: ${esc(serviceIssueTitle(row))}"></span>`
+          )
+          .join("");
+        return `<div class="health-chip health-chip-group${snoozed}" title="${esc(title)}"
+            data-project="${esc(group.project)}">
+          <span class="health-dot ${esc(group.status)}"></span>
+          <span class="health-chip-label">${esc(group.display_name)}</span>
+          <span class="health-chip-services">${dots}</span>
+          ${group.snoozed ? '<span class="pill">snoozed</span>' : ""}
         </div>`;
       })
       .join("");
-    el.querySelectorAll(".health-chip").forEach((chip) => {
+    el.querySelectorAll(".health-chip-group").forEach((chip) => {
       chip.addEventListener("click", () => {
-        openServiceModal(chip.dataset.project, chip.dataset.service);
+        openProjectModal(chip.dataset.project);
       });
     });
   }
@@ -549,6 +598,76 @@
   }
 
   // -------------------------------------------------------------------------
+  // Compose project modal
+  // -------------------------------------------------------------------------
+  function openProjectModal(project) {
+    const modal = $("project-modal");
+    const content = $("project-modal-content");
+    if (!modal || !content) return;
+
+    const group = composeProjects().find((row) => row.project === project);
+    if (!group) return;
+
+    const statusColor =
+      group.status === "healthy" ? "success" : group.status === "critical" ? "danger" : "warning";
+    const rowsHtml = group.services
+      .map((row) => {
+        const rowColor =
+          row.status === "healthy" ? "success" : row.status === "critical" ? "danger" : "warning";
+        const issues = (row.issues || []).length
+          ? `<ul class="svc-issues">${row.issues.map((issue) => `<li>${esc(issue)}</li>`).join("")}</ul>`
+          : "";
+        return `<li class="project-svc-row" data-project="${esc(row.project)}" data-service="${esc(row.service)}">
+          <div class="project-svc-main">
+            <span class="health-dot ${esc(row.status)}" style="width:0.7rem;height:0.7rem"></span>
+            <div class="project-svc-copy">
+              <span class="title">${esc(row.service)}</span>
+              <span class="detail" style="color:var(--${rowColor})">${esc(row.container_status || row.status)}</span>
+              ${issues}
+            </div>
+          </div>
+          <button type="button" class="btn-secondary btn-sm project-svc-manage">Manage</button>
+        </li>`;
+      })
+      .join("");
+
+    content.innerHTML = `
+      <div class="svc-modal-header">
+        <h2 id="project-modal-title">${esc(group.display_name)}</h2>
+        <div class="svc-status-row">
+          <span class="health-dot ${esc(group.status)}" style="width:0.7rem;height:0.7rem"></span>
+          <span style="font-size:0.84rem;color:var(--${statusColor})">${esc(group.status)}</span>
+          <span class="pill">${esc(group.services.length)} service${group.services.length === 1 ? "" : "s"}</span>
+          <span class="pill">${esc(group.project)}</span>
+        </div>
+      </div>
+      <ul class="project-svc-list">${rowsHtml}</ul>`;
+
+    modal.classList.remove("hidden");
+
+    content.querySelectorAll(".project-svc-row").forEach((row) => {
+      row.addEventListener("click", () => {
+        closeProjectModal();
+        openServiceModal(row.dataset.project, row.dataset.service);
+      });
+    });
+  }
+
+  function closeProjectModal() {
+    const modal = $("project-modal");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function initProjectModal() {
+    document.querySelectorAll("[data-close-project]").forEach((el) => {
+      el.addEventListener("click", closeProjectModal);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeProjectModal();
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // Service action modal
   // -------------------------------------------------------------------------
   async function openServiceModal(project, service) {
@@ -831,6 +950,7 @@
   function initDashboard() {
     initTheme();
     initModal();
+    initProjectModal();
     initServiceModal();
     initFilters();
     initActivityScroll();

@@ -39,7 +39,7 @@ require_cmd() {
 install_packages() {
   if command -v dnf >/dev/null 2>&1; then
     log "Installing system packages (sudo may prompt)..."
-    sudo dnf install -y python3 python3-pip msmtp lsof podman podman-compose || true
+    sudo dnf install -y python3 python3-pip msmtp lsof podman || true
   else
     log "dnf not found; ensure python3, msmtp, lsof, and podman are installed."
   fi
@@ -118,6 +118,19 @@ account default : gmail
 EOF
   chmod 600 "$msmtp_file"
   log "Wrote ${msmtp_file}"
+}
+
+install_podman_compose() {
+  mkdir -p "$BIN_DIR"
+  # RHEL 10 BaseOS/AppStream do not ship podman-compose; pip installs it into the agent venv.
+  if [[ ! -x "${VENV_DIR}/bin/podman-compose" ]]; then
+    die "podman-compose missing from venv — check requirements.txt and re-run install.sh"
+  fi
+  ln -sf "${VENV_DIR}/bin/podman-compose" "${BIN_DIR}/podman-compose"
+  if ! PATH="${BIN_DIR}:${PATH}" podman compose version >/dev/null 2>&1; then
+    die "podman compose provider not working — check PATH includes ${BIN_DIR}"
+  fi
+  log "Linked podman-compose: ${BIN_DIR}/podman-compose"
 }
 
 install_cli() {
@@ -224,6 +237,7 @@ main() {
 
   install_packages
   setup_venv
+  install_podman_compose
   write_config "$COMPOSE_PATH"
   write_secrets
   write_ui_auth

@@ -189,6 +189,35 @@ section { margin-bottom: 1.75rem; }
 
 .health-chip.snoozed { opacity: 0.65; border-style: dashed; }
 
+.health-chip-group {
+  border-radius: 12px;
+  padding-right: 0.65rem;
+}
+
+.health-chip-label {
+  font-weight: 500;
+}
+
+.health-chip-services {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-left: 0.45rem;
+  margin-left: 0.1rem;
+  border-left: 1px solid var(--border);
+}
+
+.health-svc-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.health-svc-dot.healthy { background: var(--success); }
+.health-svc-dot.warning { background: var(--warning); }
+.health-svc-dot.critical { background: var(--danger); }
+
 .health-dot {
   width: 0.55rem;
   height: 0.55rem;
@@ -612,6 +641,59 @@ code {
 .svc-modal-header { margin-bottom: 0.75rem; }
 .svc-modal-header h2 { margin: 0 0 0.3rem; font-size: 1.1rem; }
 .svc-status-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.85rem; }
+
+.project-svc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.project-svc-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.project-svc-row:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91,156,245,0.14);
+}
+
+.project-svc-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.project-svc-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.project-svc-copy .title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.project-svc-copy .svc-issues {
+  margin: 0.15rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
 
 .svc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
 

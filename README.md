@@ -44,6 +44,7 @@ chmod +x install.sh uninstall.sh
 The installer will:
 
 - `dnf install` python3, msmtp, lsof, podman (sudo once)
+- `pip install podman-compose` into `~/.local/bin` (not in RHEL 10 repos — handled by `install.sh`)
 - Prompt for compose search root (default `/home/digilabs`), Gmail app password, UI login
 - Write config to `~/.config/container-agent/`
 - Install a **systemd user timer** (every 5 minutes)
@@ -169,8 +170,8 @@ Rootless Podman stores containers per user. Your compose stacks run under your S
 
 | Problem | Fix |
 |---------|-----|
-| `podman compose` / compose provider errors | `sudo dnf install podman-compose` then verify: `podman compose version` |
-| UI shows container down but `podman ps` shows it running | Compose provider missing — agent cannot run `podman compose ps`; install `podman-compose` and re-run `container-agent run` |
+| `podman compose` / compose provider errors | RHEL 10 has no `podman-compose` RPM — run `./install.sh` or `pip install --user podman-compose`, then verify: `podman compose version` |
+| UI shows container down but `podman ps` shows it running | Compose provider missing — agent cannot run `podman compose ps`; ensure `~/.local/bin/podman-compose` exists and systemd `PATH` includes it, then re-run `container-agent run` |
 | Timer not firing | `sudo loginctl enable-linger $USER` then `systemctl --user enable --now container-agent.timer` |
 | Email fails | Test: `echo test \| msmtp drewfert@gmail.com` |
 | No LLM analysis | `container-agent status` (ollama up?); `container-agent pull-llm`; check `ollama_model` in `config.yaml` |

@@ -100,6 +100,46 @@ def _service_status(health, service_issues: list[str]) -> str:
     return "healthy"
 
 
+_STATUS_RANK = {"critical": 0, "warning": 1, "healthy": 2}
+
+
+def _rollup_status(statuses: list[str]) -> str:
+    if not statuses:
+        return "healthy"
+    return min(statuses, key=lambda status: _STATUS_RANK.get(status, 1))
+
+
+def _project_display_name(services: list[dict]) -> str:
+    for row in services:
+        name = str(row.get("display_name") or "")
+        if "." in name:
+            return name
+    for row in services:
+        name = str(row.get("display_name") or "")
+        if name:
+            return name
+    return str(services[0].get("project", ""))
+
+
+def _group_compose_projects(service_health_rows: list[dict]) -> list[dict]:
+    by_project: dict[str, list[dict]] = {}
+    for row in service_health_rows:
+        by_project.setdefault(str(row["project"]), []).append(row)
+    groups: list[dict] = []
+    for project, services in sorted(by_project.items()):
+        ordered = sorted(services, key=lambda row: str(row["service"]))
+        groups.append(
+            {
+                "project": project,
+                "display_name": _project_display_name(ordered),
+                "status": _rollup_status([str(row["status"]) for row in ordered]),
+                "snoozed": all(bool(row.get("snoozed")) for row in ordered),
+                "services": ordered,
+            }
+        )
+    return groups
+
+
 def _re_evaluate(project: ComposeProject, service: str) -> bool:
     return len(evaluate_service(project, service).issues) == 0
 
@@ -121,9 +161,9 @@ def run_once() -> int:
         host_issues.append(oom_issue)
     if not compose_provider_available():
         host_issues.append(
-            "podman compose provider missing — install podman-compose "
-            "(sudo dnf install podman-compose). Monitoring uses podman label fallbacks; "
-            "start/stop/restart actions still require compose."
+            "podman compose provider missing — install podman-compose via pip "
+            "(re-run install.sh, or: pip install --user podman-compose). "
+            "Monitoring uses podman label fallbacks; start/stop/restart actions still require compose."
         )
 
     projects = discover_compose_projects(cfg["compose_search_paths"])
@@ -153,6 +193,7 @@ def run_once() -> int:
                 "resolved": 0,
                 "unresolved": 0,
                 "services": [],
+                "compose_projects": [],
             }
         )
         return 0
@@ -336,6 +377,7 @@ def run_once() -> int:
             "pending": pending,
             "unresolved": unresolved,
             "services": service_health_rows,
+            "compose_projects": _group_compose_projects(service_health_rows),
         }
     )
     return 0 if unresolved == 0 else 1

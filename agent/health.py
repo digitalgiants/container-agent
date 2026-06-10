@@ -65,17 +65,20 @@ def probe_http(inspect_data: dict, timeout: float = 5.0) -> tuple[bool | None, s
         url = f"http://{host}:{port}{path}"
         try:
             resp = requests.get(url, timeout=timeout)
-            if resp.status_code < 500:
-                app_version = None
-                if resp.headers.get("content-type", "").startswith("application/json"):
-                    try:
-                        body = resp.json()
-                        app_version = body.get("app_version") or body.get("version")
-                    except ValueError:
-                        pass
-                return resp.status_code < 400, app_version
         except requests.RequestException:
             continue
+        if resp.status_code >= 500:
+            continue
+        if resp.status_code >= 400:
+            continue
+        app_version = None
+        if resp.headers.get("content-type", "").startswith("application/json"):
+            try:
+                body = resp.json()
+                app_version = body.get("app_version") or body.get("version")
+            except ValueError:
+                pass
+        return True, app_version
     return False, None
 
 

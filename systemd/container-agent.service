@@ -5,6 +5,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=%REPO_DIR%
+Environment=PATH=%LOCAL_BIN%:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONPATH=%REPO_DIR%
 ExecStart=%REPO_DIR%/.venv/bin/python -m agent
 

@@ -133,8 +133,8 @@ EOF
 
 install_systemd_user_units() {
   mkdir -p "$SYSTEMD_USER_DIR"
-  sed "s|%REPO_DIR%|${REPO_DIR}|g" "${REPO_DIR}/systemd/container-agent.service" \
-    > "${SYSTEMD_USER_DIR}/container-agent.service"
+  sed -e "s|%REPO_DIR%|${REPO_DIR}|g" -e "s|%LOCAL_BIN%|${HOME}/.local/bin|g" \
+    "${REPO_DIR}/systemd/container-agent.service" > "${SYSTEMD_USER_DIR}/container-agent.service"
   cp "${REPO_DIR}/systemd/container-agent.timer" "${SYSTEMD_USER_DIR}/container-agent.timer"
   log "Enabling lingering for ${USER} (allows timers when not logged in)..."
   sudo loginctl enable-linger "$USER" || true

@@ -126,7 +126,7 @@ install_podman_compose() {
   if [[ ! -x "${VENV_DIR}/bin/podman-compose" ]]; then
     die "podman-compose missing from venv — check requirements.txt and re-run install.sh"
   fi
-  ln -sf "${VENV_DIR}/bin/podman-compose" "${BIN_DIR}/podman-compose"
+  ln -sfn "${VENV_DIR}/bin/podman-compose" "${BIN_DIR}/podman-compose"
   if ! PATH="${BIN_DIR}:${PATH}" podman compose version >/dev/null 2>&1; then
     die "podman compose provider not working — check PATH includes ${BIN_DIR}"
   fi

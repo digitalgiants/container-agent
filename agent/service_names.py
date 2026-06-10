@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from agent.caddy_domains import domain_for_port, load_port_domain_map
+from agent.config import agent_subprocess_env
 from agent.discovery import ComposeProject, container_id_for_service
 
 
@@ -22,6 +23,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         capture_output=True,
         text=True,
         check=False,
+        env=agent_subprocess_env(),
     )
 
 

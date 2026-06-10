@@ -4,6 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from agent.config import agent_subprocess_env
 from agent.discovery import ComposeProject, container_id_for_service
 
 
@@ -23,6 +24,7 @@ def tail_service_logs(project: ComposeProject, service: str, lines: int) -> str:
         capture_output=True,
         text=True,
         check=False,
+        env=agent_subprocess_env(),
     )
     output = (result.stdout or "") + (result.stderr or "")
     if result.returncode == 0:

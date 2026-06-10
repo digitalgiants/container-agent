@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.config import agent_subprocess_env
 from agent.discovery import ComposeProject, container_id_for_service
 from agent.health import ServiceHealth
 from agent.incidents import ActionRecord, Incident
@@ -28,6 +29,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> ActionRecord:
         capture_output=True,
         text=True,
         check=False,
+        env=agent_subprocess_env(),
     )
     output = ((result.stdout or "") + (result.stderr or "")).strip()
     summary = output[-2000:] if output else f"exit {result.returncode}"

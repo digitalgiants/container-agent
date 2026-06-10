@@ -170,7 +170,7 @@ Rootless Podman stores containers per user. Your compose stacks run under your S
 
 | Problem | Fix |
 |---------|-----|
-| `podman compose` / compose provider errors | RHEL 10 has no `podman-compose` RPM — run `./install.sh` or `pip install --user podman-compose`, then verify: `podman compose version` |
+| `podman compose` / compose provider errors | RHEL 10 has no `podman-compose` RPM — run `./install.sh` or `pip install --user podman-compose`. Verify: `readlink -f ~/.local/bin/podman-compose` and `podman compose version` (broken symlinks cause the 7-path lookup error) |
 | UI shows container down but `podman ps` shows it running | Compose provider missing — agent cannot run `podman compose ps`; ensure `~/.local/bin/podman-compose` exists and systemd `PATH` includes it, then re-run `container-agent run` |
 | Timer not firing | `sudo loginctl enable-linger $USER` then `systemctl --user enable --now container-agent.timer` |
 | Email fails | Test: `echo test \| msmtp drewfert@gmail.com` |

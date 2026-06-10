@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from agent.config import agent_subprocess_env
 from agent.podman_json import parse_podman_json_rows
 
 COMPOSE_PROVIDER_MARKERS = (
@@ -50,6 +51,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         capture_output=True,
         text=True,
         check=False,
+        env=agent_subprocess_env(),
     )
 
 

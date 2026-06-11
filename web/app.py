@@ -657,6 +657,12 @@ def api_stop(project: str, service: str, user: str = Depends(require_user)) -> d
     return _queue_action("stop", project, service, user)
 
 
+@app.post("/api/recover-stack/{project}")
+def api_recover_stack(project: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    """Queue ordered `compose up -d` for every service in a project (dependencies first)."""
+    return _queue_action("recover-stack", project, "", user)
+
+
 @app.delete("/api/restart-counts/{project}/{service}")
 def api_clear_restart_counts(
     project: str, service: str, _user: str = Depends(require_user)

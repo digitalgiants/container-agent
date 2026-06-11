@@ -150,6 +150,7 @@ systemd user timer (5 min)
     → python -m agent
         → discover compose files under /home/digilabs (all git repos)
         → health + logs (tail 80)
+        → stack recovery for multi-service projects (ordered compose up, deps first)
         → graceful restart (max 5/hour per service)
         → lock-file analysis (lsof, backup, optional delete)
         → Ollama LLM analysis if still broken

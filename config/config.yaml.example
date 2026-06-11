@@ -9,6 +9,10 @@ max_restarts_per_hour: 5
 log_tail_lines: 80
 graceful_retries_before_force: 2
 
+# Multi-service stacks: ordered compose up (dependencies first, e.g. postgres → api).
+stack_recovery_enabled: true
+stack_recovery_wait_seconds: 30
+
 # Recursively finds compose.yaml / docker-compose.yml under each path (e.g. every git repo).
 compose_search_paths:
   - /home/digilabs
@@ -28,6 +32,8 @@ lock_file_patterns:
   - "*-shm"
 
 log_error_patterns:
+  - "could not connect to server"
+  - "connection refused"
   - "database is locked"
   - "Resource temporarily unavailable"
   - "file is locked"

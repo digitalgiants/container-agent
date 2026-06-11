@@ -18,6 +18,12 @@ from agent.ollama_client import analyze_incident
 from agent.health import evaluate_service, host_disk_low, host_oom_recent
 from agent.incidents import IncidentStore
 from agent.logs import extract_lock_hints, scan_log_issues, tail_service_logs
+from agent.compose_stack import (
+    ServiceScan,
+    recover_compose_stack,
+    recover_project_stack,
+    stack_recovery_plan,
+)
 from agent.remediate import (
     compose_start,
     compose_stop,
@@ -64,6 +70,13 @@ def _process_web_actions(
             result_msg = graceful_restart(project, service).result
         elif action_type == "stop":
             result_msg = compose_stop(project, service).result
+        elif action_type == "recover-stack":
+            cfg = load_config()
+            actions, ran = recover_project_stack(project, data_dir, cfg)
+            if not ran:
+                result_msg = actions[-1].result if actions else "stack recovery skipped"
+            else:
+                result_msg = "; ".join(f"{action.command}: {action.result[:120]}" for action in actions)
         else:
             result_msg = f"Unknown action type: {action_type!r}"
 
@@ -230,6 +243,9 @@ def run_once() -> int:
             )
             continue
 
+        project_scans: list[ServiceScan] = []
+        scan_meta: dict[str, dict] = {}
+
         for service in services:
             health = evaluate_service(project, service)
             logs = tail_service_logs(project, service, tail_lines)
@@ -256,10 +272,72 @@ def run_once() -> int:
                     "app_version": health.app_version,
                 }
             )
+            project_scans.append(
+                ServiceScan(
+                    service=service,
+                    health=health,
+                    issues=service_issues,
+                    logs=logs,
+                    snoozed=snoozed,
+                )
+            )
+            scan_meta[service] = {"logs": logs, "lock_hints": lock_hints}
+
+        stack_recovered = False
+        if cfg.get("stack_recovery_enabled", True):
+            recovery_plan = stack_recovery_plan(project, project_scans, cfg)
+            if recovery_plan:
+                stack_actions, ran = recover_compose_stack(project, recovery_plan, data_dir, cfg)
+                if ran:
+                    stack_recovered = True
+                    activity.record(
+                        f"Stack recovery: {project.name} ({' → '.join(recovery_plan)})",
+                        category="stack_recovery",
+                        project=project.name,
+                    )
+                    for action in stack_actions:
+                        level = "info" if action.result.startswith("ready") or ": ok" in action.result else "warn"
+                        activity.record(
+                            f"{action.command}: {action.result[:160]}",
+                            level=level,
+                            category="stack_recovery",
+                            project=project.name,
+                        )
+                    for row in service_health_rows:
+                        if row["project"] != project.name:
+                            continue
+                        svc = row["service"]
+                        health = evaluate_service(project, svc)
+                        log_issues = scan_log_issues(scan_meta[svc]["logs"], log_patterns)
+                        service_issues = list(health.issues) + log_issues
+                        row["status"] = _service_status(health, service_issues)
+                        row["issues"] = service_issues[:5]
+                        row["container_status"] = health.status
+                        row["app_version"] = health.app_version
+
+        for scan in project_scans:
+            service = scan.service
+            health = scan.health
+            logs = scan_meta[service]["logs"]
+            lock_hints = scan_meta[service]["lock_hints"]
+            service_issues = list(scan.issues)
+
+            if stack_recovered:
+                health = evaluate_service(project, service)
+                log_issues = scan_log_issues(logs, log_patterns)
+                service_issues = list(health.issues) + log_issues
 
             if not service_issues:
+                if stack_recovered and scan.issues:
+                    activity.record(
+                        "Resolved after stack recovery",
+                        category="resolved",
+                        project=health.project,
+                        service=health.service,
+                    )
+                    resolved += 1
                 continue
-            if snoozed:
+            if scan.snoozed:
                 activity.record(
                     "Skipped snoozed service",
                     category="snooze",

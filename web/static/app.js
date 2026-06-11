@@ -586,6 +586,16 @@
     }
   }
 
+  async function recoverStack(project) {
+    try {
+      await fetchJson(`/api/recover-stack/${encodeURIComponent(project)}`, { method: "POST" });
+      showToast(`Stack recovery queued for ${project} — runs on next scan`, "success");
+      closeProjectModal();
+    } catch (e) {
+      showToast("Failed to queue stack recovery", "error");
+    }
+  }
+
   async function clearRestartCounts(project, service) {
     try {
       await fetchJson(`/api/restart-counts/${encodeURIComponent(project)}/${encodeURIComponent(service)}`, {
@@ -641,9 +651,20 @@
           <span class="pill">${esc(group.project)}</span>
         </div>
       </div>
+      <div class="svc-actions">
+        <button type="button" class="btn-success project-recover-btn">Recover stack</button>
+      </div>
       <ul class="project-svc-list">${rowsHtml}</ul>`;
 
     modal.classList.remove("hidden");
+
+    const recoverBtn = content.querySelector(".project-recover-btn");
+    if (recoverBtn) {
+      recoverBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        recoverStack(project);
+      });
+    }
 
     content.querySelectorAll(".project-svc-row").forEach((row) => {
       row.addEventListener("click", () => {
